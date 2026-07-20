@@ -1,0 +1,15 @@
+node_modules/
+dist/
+.env
+.env.local
+
+test-results/
+playwright-report/
+blob-report/
+playwright/.clerk/
+
+artifacts/screenshots/*
+artifacts/traces/*
+artifacts/reports/*
+
+!.gitkeep
