@@ -50,7 +50,11 @@ export class BrowserJourneyRunner {
         password: environment.testPassword,
       }, this.options.allowUiAuthenticationFallback ?? true);
       await this.client.navigateToCaseList();
-      await this.client.selectCase(scenario.caseId);
+      await this.client.selectCase({
+        caseId: scenario.caseId,
+        patientName: scenario.patientName,
+        encounterPath: scenario.encounterPath,
+      });
       await this.client.startConsultation();
 
       for (const step of scenario.steps) {
@@ -185,7 +189,11 @@ export class BrowserJourneyRunner {
       runId: randomUUID(),
       environmentName: environment.name,
       caseId: scenario.caseId,
+      patientName: scenario.patientName,
       scenarioId: scenario.id,
+      authenticatedStateUsage: this.options.allowUiAuthenticationFallback === false
+        ? "clerk-storage-state"
+        : "storage-state-or-ui-fallback",
       startedAt: new Date().toISOString(),
       completedAt: null,
       overallStatus: "passed",

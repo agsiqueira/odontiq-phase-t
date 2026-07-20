@@ -29,6 +29,12 @@ export interface PatientInteractionResult {
   visibleApplicationError: string | null;
 }
 
+export interface CaseSelection {
+  caseId: string;
+  patientName: string;
+  encounterPath: string;
+}
+
 interface ConversationSnapshot {
   count: number;
   messages: string[];
@@ -115,9 +121,10 @@ export class OdontiqBrowserClient {
     }
   }
 
-  public async selectCase(caseId: string): Promise<void> {
+  public async selectCase(selection: CaseSelection): Promise<void> {
+    const { caseId, patientName, encounterPath } = selection;
     try {
-      const cards = selectors.caseCard(this.page, caseId);
+      const cards = selectors.caseCard(this.page, caseId, patientName);
       await cards.first().waitFor({ state: "visible" });
       const cardCount = await cards.count();
       if (cardCount !== 1) {
@@ -125,7 +132,7 @@ export class OdontiqBrowserClient {
       }
 
       const caseCard = cards.first();
-      const actions = selectors.caseAction(caseCard, caseId);
+      const actions = selectors.caseAction(caseCard, encounterPath);
       const actionCount = await actions.count();
       if (actionCount !== 1) {
         throw new Error(`Expected one Start, Resume, or Restart Case action, found ${actionCount}.`);
@@ -140,13 +147,13 @@ export class OdontiqBrowserClient {
       }
 
       await action.click();
-      await this.page.waitForURL(selectors.caseEncounterUrlPattern(caseId));
-      if (!selectors.caseEncounterUrlPattern(caseId).test(this.page.url())) {
+      await this.page.waitForURL(selectors.caseEncounterUrlPattern(encounterPath));
+      if (!selectors.caseEncounterUrlPattern(encounterPath).test(this.page.url())) {
         throw new Error(`The case action opened a different route: ${this.page.url()}.`);
       }
-      await selectors.caseEncounterMarker(this.page, caseId).first().waitFor({ state: "visible" });
+      await selectors.caseEncounterMarker(this.page, caseId, patientName).first().waitFor({ state: "visible" });
     } catch (error) {
-      const diagnostics = await this.collectCaseSelectionDiagnostics(caseId);
+      const diagnostics = await this.collectCaseSelectionDiagnostics(selection);
       throw this.interactionError(
         `Could not select ${caseId}. ${diagnostics}`,
         "select-case",
@@ -269,7 +276,8 @@ export class OdontiqBrowserClient {
     return new OdontiqBrowserInteractionError(`${message} Current URL: ${this.page.url()}`, operation, { cause });
   }
 
-  private async collectCaseSelectionDiagnostics(caseId: string): Promise<string> {
+  private async collectCaseSelectionDiagnostics(selection: CaseSelection): Promise<string> {
+    const { caseId, patientName, encounterPath } = selection;
     const visibleTexts = async (locator: ReturnType<Page["locator"]>): Promise<string[]> => {
       const values: string[] = [];
       const count = Math.min(await locator.count(), 20);
@@ -282,12 +290,12 @@ export class OdontiqBrowserClient {
       return values;
     };
 
-    const cards = selectors.caseCard(this.page, caseId);
+    const cards = selectors.caseCard(this.page, caseId, patientName);
     const candidateCount = await cards.count().catch(() => 0);
     const candidateText = candidateCount > 0
       ? (await cards.first().innerText().catch(() => "[unreadable]")).trim().slice(0, 1_000)
       : "[none]";
-    const actions = candidateCount > 0 ? selectors.caseAction(cards.first(), caseId) : null;
+    const actions = candidateCount > 0 ? selectors.caseAction(cards.first(), encounterPath) : null;
     const actionCount = actions ? await actions.count().catch(() => 0) : 0;
     const actionVisible = actions && actionCount === 1
       ? await actions.first().isVisible().catch(() => false)
@@ -306,7 +314,7 @@ export class OdontiqBrowserClient {
     return [
       `Visible patient names: ${(await visibleTexts(selectors.casePatientHeadings(this.page))).join(" | ") || "[none]"}.`,
       `Visible card actions: ${(await visibleTexts(selectors.visibleCaseActionLabels(this.page))).join(" | ") || "[none]"}.`,
-      `Candidate ${selectors.casePatientName(caseId)} cards: ${candidateCount}.`,
+      `Candidate ${patientName} cards: ${candidateCount}.`,
       `Candidate card text: ${candidateText}.`,
       `Scoped action count: ${actionCount}; visible: ${actionVisible}; enabled: ${actionEnabled}.`,
       `Screenshot: ${screenshotPath}.`,

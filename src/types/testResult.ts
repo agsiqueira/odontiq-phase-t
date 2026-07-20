@@ -10,6 +10,8 @@ export type PersistenceStatus = "not-checked" | "confirmed" | "failed";
 
 export type ReportStatus = "pending" | "written" | "failed";
 
+export type AuthenticatedStateUsage = "clerk-storage-state" | "storage-state-or-ui-fallback";
+
 export interface TestAssertionResult {
   id: string;
   name: string;
@@ -46,7 +48,9 @@ export interface SyntheticTestRun {
   runId: string;
   environmentName: string;
   caseId: string;
+  patientName: string;
   scenarioId: string;
+  authenticatedStateUsage: AuthenticatedStateUsage;
   startedAt: string;
   completedAt: string | null;
   overallStatus: RunStatus;

@@ -10,6 +10,8 @@
     "test:browser:headed": "playwright test --headed",
     "test:browser:ui": "playwright test --ui",
     "test:case01": "playwright test tests/browser/case01-happy-path.spec.ts --project=\"authenticated chromium\"",
+    "test:case02": "playwright test tests/browser/case02-happy-path.spec.ts --project=\"authenticated chromium\"",
+    "test:cases": "playwright test tests/browser/case01-happy-path.spec.ts tests/browser/case02-happy-path.spec.ts --project=\"authenticated chromium\"",
     "test:auth-setup": "playwright test --project=\"global setup\"",
     "test:api": "tsx src/runners/runApiTests.ts",
     "report": "playwright show-report artifacts/reports/playwright"

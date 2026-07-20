@@ -11,6 +11,8 @@ export const case01HappyPath: TestScenario = {
   id: "case-01-happy-path",
   name: "Case 1 initial patient interview",
   caseId: "case-01",
+  patientName: "Amara Johnson",
+  encounterPath: "/encounter/case-01",
   steps: [
     {
       id: "case-01-step-01-chief-complaint",

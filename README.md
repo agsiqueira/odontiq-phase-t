@@ -51,6 +51,12 @@ npm run test:auth-setup
 # Case 1 journey only
 npm run test:case01
 
+# Case 2 journey only
+npm run test:case02
+
+# Case 1 and Case 2 regression suite
+npm run test:cases
+
 # All browser tests
 npm run test:browser
 
@@ -111,10 +117,17 @@ Recommended stable OdontIQ test IDs are:
 
 ## Add a scenario
 
-1. Define a typed `TestScenario` under `src/scenarios/` with stable scenario and step IDs.
+1. Define a typed `TestScenario` under `src/scenarios/` with stable scenario and step IDs, `caseId`, `patientName`, and `encounterPath`.
 2. Use natural student messages and semantic expectations: required/prohibited phrases, a response-time maximum, and optional patient-role evaluation. Avoid exact patient wording.
 3. Create a small Playwright spec that passes the scenario to `BrowserJourneyRunner` and attaches its JSON report.
 4. Verify any new UI element in codegen and add its selector only to `src/config/selectors.ts`.
 5. Run `npm run typecheck` and the scenario test.
 
 Deterministic patient-role patterns are intentionally narrow heuristics. They can flag known instructor-like phrases, but they do not establish full clinical or role correctness.
+
+## Supported case journeys
+
+- Case 1: Amara Johnson at `/encounter/case-01`
+- Case 2: Marcus Lee at `/encounter/case-02`
+
+Both journeys use the same `BrowserJourneyRunner`, browser client, scoped case-card behavior, transcript detection, deterministic evaluator, reporting, and authenticated Playwright project. Scenario files supply patient identity, encounter path, messages, and tolerant expectations; no case-specific runner is created.
