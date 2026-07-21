@@ -132,8 +132,29 @@ export const selectors = {
 
   finishConsultationButton: (page: Page): Locator =>
     page.getByTestId("finish-consultation-button").or(
-      page.getByRole("button", { name: /finish|complete.*consultation/i }),
+      page.getByRole("button", { name: /^(?:finish consultation|complete consultation)$/i }),
     ),
+
+  completionLoadingMarker: (page: Page): Locator =>
+    page.getByRole("button", { name: /finishing|compiling/i })
+      .or(page.getByText(/generating a transcript-grounded debrief/i)),
+
+  viewFacultyReportLink: (page: Page): Locator =>
+    page.getByRole("link", { name: /^view report$/i }),
+
+  facultyReportHeading: (page: Page): Locator =>
+    page.getByRole("heading", { name: /faculty rubric report/i })
+      .or(page.getByText(/faculty rubric report/i, { exact: true })),
+
+  reportSectionHeading: (page: Page, name: RegExp): Locator =>
+    page.getByRole("heading", { name }).or(page.getByText(name, { exact: true })),
+
+  reportTranscriptToggle: (page: Page): Locator =>
+    page.getByRole("button", { name: /encounter transcript/i })
+      .or(page.getByRole("link", { name: /encounter transcript/i })),
+
+  reportErrorMarker: (page: Page): Locator =>
+    page.getByText(/no completed encounter was found|report unavailable|report generation was interrupted|report not found|failed to generate/i),
 
   // Verify visible alert conventions against the current OdontIQ UI.
   visibleApplicationErrors: (page: Page): Locator =>

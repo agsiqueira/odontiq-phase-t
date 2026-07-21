@@ -3,6 +3,11 @@ import path from "node:path";
 import { expect, type Locator, type Page } from "@playwright/test";
 import { authenticateClerkTestSession, type ClerkCredentials } from "../auth/clerkTestSession.js";
 import { selectors, type ConversationRole } from "../config/selectors.js";
+import type {
+  AttemptStateUsed,
+  FacultyReportResult,
+  FacultyReportTranscriptEntry,
+} from "../types/testResult.js";
 
 export class OdontiqBrowserInteractionError extends Error {
   public constructor(
@@ -13,6 +18,15 @@ export class OdontiqBrowserInteractionError extends Error {
     super(message, options);
     this.name = "OdontiqBrowserInteractionError";
   }
+}
+
+function sanitizeBrowserUrl(rawUrl: string): string {
+  const url = new URL(rawUrl);
+  url.username = "";
+  url.password = "";
+  url.search = "";
+  url.hash = "";
+  return url.toString();
 }
 
 export class PatientResponseTimeoutError extends OdontiqBrowserInteractionError {
@@ -33,6 +47,31 @@ export interface CaseSelection {
   caseId: string;
   patientName: string;
   encounterPath: string;
+}
+
+export interface SelectedCaseResult {
+  attemptStateUsed: AttemptStateUsed;
+  actionLabel: string;
+}
+
+export interface CompletedEncounterResult {
+  completionControlLabel: string;
+  completionHttpStatus: number | null;
+  evaluationRequestUrl: string | null;
+  evaluationHttpStatus: number | null;
+  completionClickedAt: string;
+  reportNavigationAt: string;
+  reportHeadingVisibleAt: string;
+  reportGenerationDurationMs: number;
+  reportUrl: string;
+  facultyReport: FacultyReportResult;
+}
+
+export class CompletionWorkflowError extends OdontiqBrowserInteractionError {
+  public constructor(message: string, public readonly progress: Partial<CompletedEncounterResult>, options?: ErrorOptions) {
+    super(message, "complete-encounter", options);
+    this.name = "CompletionWorkflowError";
+  }
 }
 
 interface ConversationSnapshot {
@@ -121,7 +160,7 @@ export class OdontiqBrowserClient {
     }
   }
 
-  public async selectCase(selection: CaseSelection): Promise<void> {
+  public async selectCase(selection: CaseSelection): Promise<SelectedCaseResult> {
     const { caseId, patientName, encounterPath } = selection;
     try {
       const cards = selectors.caseCard(this.page, caseId, patientName);
@@ -146,12 +185,24 @@ export class OdontiqBrowserClient {
         throw new Error("The scoped case action exists but is disabled.");
       }
 
+      const actionText = (await action.innerText()).trim();
+      const actionLabel = actionText.match(/(?:start|resume|restart) case/i)?.[0] ?? actionText;
       await action.click();
       await this.page.waitForURL(selectors.caseEncounterUrlPattern(encounterPath));
       if (!selectors.caseEncounterUrlPattern(encounterPath).test(this.page.url())) {
         throw new Error(`The case action opened a different route: ${this.page.url()}.`);
       }
       await selectors.caseEncounterMarker(this.page, caseId, patientName).first().waitFor({ state: "visible" });
+      return {
+        actionLabel,
+        attemptStateUsed: /^start case$/i.test(actionLabel)
+          ? "started"
+          : /^resume case$/i.test(actionLabel)
+            ? "resumed"
+            : /^restart case$/i.test(actionLabel)
+              ? "restarted"
+              : "unknown",
+      };
     } catch (error) {
       const diagnostics = await this.collectCaseSelectionDiagnostics(selection);
       throw this.interactionError(
@@ -265,11 +316,134 @@ export class OdontiqBrowserClient {
     return null;
   }
 
-  public async completeEncounter(): Promise<never> {
-    throw new OdontiqBrowserInteractionError(
-      "Encounter completion is intentionally not implemented in the Phase T foundation.",
-      "complete-encounter",
-    );
+  public async completeEncounter(caseId: string, timeoutMs = 90_000): Promise<CompletedEncounterResult> {
+    const control = selectors.finishConsultationButton(this.page).first();
+    const encounterUrl = this.page.url();
+    const progress: Partial<CompletedEncounterResult> = {};
+    let startedAt: number | null = null;
+    try {
+      await control.waitFor({ state: "visible", timeout: 30_000 });
+      if (!(await control.isEnabled())) throw new Error("The completion control is disabled.");
+      const completionControlLabel = (await control.innerText()).trim();
+      const completionClickedAt = new Date().toISOString();
+      startedAt = Date.now();
+      progress.completionControlLabel = completionControlLabel;
+      progress.completionClickedAt = completionClickedAt;
+      const completionResponse = this.page.waitForResponse((response) => {
+        const url = new URL(response.url());
+        return response.request().method() === "POST" && /\/api\/encounters\/[^/]+\/complete$/.test(url.pathname);
+      }, { timeout: timeoutMs });
+      const encounterPatch = this.page.waitForResponse((response) => {
+        const url = new URL(response.url());
+        return response.request().method() === "PATCH" && /\/api\/encounters\/[^/]+$/.test(url.pathname);
+      }, { timeout: timeoutMs }).catch(() => null);
+
+      await control.click();
+      const evaluationResponse = await completionResponse;
+      const patchResponse = await encounterPatch;
+      progress.completionHttpStatus = patchResponse?.status() ?? null;
+      progress.evaluationRequestUrl = sanitizeBrowserUrl(evaluationResponse.url());
+      progress.evaluationHttpStatus = evaluationResponse.status();
+      if (evaluationResponse.status() >= 400) {
+        throw new Error(`Encounter completion API returned HTTP ${evaluationResponse.status()}.`);
+      }
+      await this.page.waitForURL(new RegExp(`/mentor/${caseId}(?:[?#]|$)`, "i"), { timeout: timeoutMs });
+      const reportNavigationAt = new Date().toISOString();
+      progress.reportNavigationAt = reportNavigationAt;
+
+      const reportError = selectors.reportErrorMarker(this.page).first();
+      await expect.poll(async () => {
+        if (await reportError.isVisible().catch(() => false)) return "error";
+        if (!(await selectors.completionLoadingMarker(this.page).first().isVisible().catch(() => false))) return "ready";
+        return "loading";
+      }, { timeout: timeoutMs, intervals: [500, 1_000, 2_000] }).not.toBe("loading");
+      if (await reportError.isVisible().catch(() => false)) {
+        throw new Error((await reportError.innerText()).trim());
+      }
+
+      const viewReport = selectors.viewFacultyReportLink(this.page).first();
+      await viewReport.waitFor({ state: "visible", timeout: 30_000 });
+      await viewReport.click();
+      progress.reportUrl = sanitizeBrowserUrl(this.page.url());
+      const heading = selectors.facultyReportHeading(this.page).first();
+      await expect.poll(async () => {
+        if (await heading.isVisible().catch(() => false)) return "ready";
+        if (await reportError.isVisible().catch(() => false)) return "error";
+        return "loading";
+      }, { timeout: timeoutMs, intervals: [250, 500, 1_000] }).not.toBe("loading");
+      if (await reportError.isVisible().catch(() => false)) {
+        throw new Error((await reportError.innerText()).trim());
+      }
+      const reportHeadingVisibleAt = new Date().toISOString();
+      progress.reportHeadingVisibleAt = reportHeadingVisibleAt;
+      progress.reportGenerationDurationMs = Date.now() - startedAt;
+      const facultyReport = await this.extractFacultyReport();
+      return {
+        completionControlLabel,
+        completionHttpStatus: patchResponse?.status() ?? null,
+        evaluationRequestUrl: sanitizeBrowserUrl(evaluationResponse.url()),
+        evaluationHttpStatus: evaluationResponse.status(),
+        completionClickedAt,
+        reportNavigationAt,
+        reportHeadingVisibleAt,
+        reportGenerationDurationMs: progress.reportGenerationDurationMs,
+        reportUrl: sanitizeBrowserUrl(this.page.url()),
+        facultyReport,
+      };
+    } catch (error) {
+      progress.reportUrl = sanitizeBrowserUrl(this.page.url());
+      if (startedAt !== null) progress.reportGenerationDurationMs = Date.now() - startedAt;
+      throw new CompletionWorkflowError(
+        `Encounter completion/report validation failed: ${error instanceof Error ? error.message : String(error)} Encounter URL before submission: ${encounterUrl}. Candidate controls: ${(await this.page.getByRole("button").allInnerTexts().catch(() => [])).join(" | ") || "[none]"}. Current URL: ${this.page.url()}`,
+        progress,
+        { cause: error },
+      );
+    }
+  }
+
+  private async extractFacultyReport(): Promise<FacultyReportResult> {
+    const section = async (label: RegExp): Promise<string[]> => {
+      const heading = selectors.reportSectionHeading(this.page, label).first();
+      if (!(await heading.isVisible().catch(() => false))) return [];
+      const container = heading.locator("xpath=.." );
+      const text = (await container.innerText()).replace((await heading.innerText()), "").trim();
+      return text.split(/\r?\n/).map((value) => value.trim()).filter(Boolean);
+    };
+    const toggle = selectors.reportTranscriptToggle(this.page).first();
+    if (await toggle.isVisible().catch(() => false)) {
+      if (await toggle.getAttribute("aria-expanded") === "false") await toggle.click();
+    }
+    const transcript: FacultyReportTranscriptEntry[] = [];
+    for (const role of ["Student", "Patient"] as const) {
+      const snapshot = await this.readConversationSnapshot(role);
+      for (const text of snapshot.messages) transcript.push({ role, text });
+    }
+    const body = await this.page.locator("body").innerText();
+    const scoreMatch = body.match(/(?:overall (?:performance|score)|score)\D{0,20}(\d+(?:\.\d+)?)\s*(?:\/\s*(\d+(?:\.\d+)?)|%|out of\s*(\d+(?:\.\d+)?))?/i);
+    const score = scoreMatch ? Number(scoreMatch[1]) : null;
+    const maximum = scoreMatch ? Number(scoreMatch[2] ?? scoreMatch[3]) : Number.NaN;
+    if (score !== null && (score < 0 || (Number.isFinite(maximum) && score > maximum))) {
+      throw new Error(`The visible score ${score} is outside its displayed range.`);
+    }
+    const strengths = await section(/^strengths$/i);
+    const areasForImprovement = await section(/^areas for improvement$/i);
+    return {
+      heading: (await selectors.facultyReportHeading(this.page).first().innerText()).trim(),
+      caseIdentity: body.match(/case\s*0?1/i)?.[0] ?? null,
+      studentIdentity: (await section(/^(?:student|learner)(?: name| identity)?$/i))[0] ?? null,
+      completedAt: (await section(/^(?:completion|completed)(?: date| at| date\/time)?$/i))[0] ?? null,
+      score,
+      scoreRange: Number.isFinite(maximum) ? `0-${maximum}` : scoreMatch?.[0] ?? null,
+      strengths,
+      areasForImprovement,
+      transcript,
+      sectionPresence: {
+        strengths: strengths.length > 0,
+        areasForImprovement: areasForImprovement.length > 0,
+        encounterTranscript: await selectors.reportSectionHeading(this.page, /encounter transcript/i).first().isVisible().catch(() => false),
+        overallPerformance: /overall performance|overall score/i.test(body),
+      },
+    };
   }
 
   private interactionError(message: string, operation: string, cause: unknown): OdontiqBrowserInteractionError {

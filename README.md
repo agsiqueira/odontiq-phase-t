@@ -57,6 +57,12 @@ npm run test:case02
 # Case 1 and Case 2 regression suite
 npm run test:cases
 
+# Complete Case 1 and validate the generated Faculty Rubric Report
+npm run test:case01-report
+
+# Conversation journeys plus completion/report regression
+npm run test:regression
+
 # All browser tests
 npm run test:browser
 
@@ -131,3 +137,13 @@ Deterministic patient-role patterns are intentionally narrow heuristics. They ca
 - Case 2: Marcus Lee at `/encounter/case-02`
 
 Both journeys use the same `BrowserJourneyRunner`, browser client, scoped case-card behavior, transcript detection, deterministic evaluator, reporting, and authenticated Playwright project. Scenario files supply patient identity, encounter path, messages, and tolerant expectations; no case-specific runner is created.
+
+## Encounter completion and Faculty Rubric Report
+
+`npm run test:case01-report` opens Case 1 through its scoped patient card, records whether the UI started, resumed, or restarted the attempt, conducts a seven-step clinically appropriate consultation, and clicks the real `Finish Consultation` control exactly once. Phase T then monitors the encounter completion and evaluation responses and allows up to 90 seconds for LLM-backed report generation.
+
+The confirmed workflow navigates from `/encounter/case-01` to `/mentor/case-01?attemptId=...`, waits for mentor generation to finish, follows the real `View Report` link, and expects `/reports/case-01?attemptId=...`. Query strings are removed from stored report URLs. A collapsed Encounter Transcript is expanded using its accessible control and `aria-expanded` state.
+
+The structured JSON result records the attempt state, conversation-step count, completion label and HTTP status, sanitized evaluation URL/status, report-generation duration, report route, visible section presence, optional numeric score/range, Strengths, Areas for Improvement, and Student/Patient transcript counts. Required sections are the Faculty Rubric Report heading, Case 1 identity, meaningful Strengths and Areas for Improvement, and an Encounter Transcript containing both roles. Exact evaluator prose and a particular score are not required.
+
+Completion artifacts use the same locations as other journeys: JSON under `artifacts/reports/runs/` and Playwright screenshots, videos, and traces under `artifacts/traces/`. If report generation is interrupted or the report API is unavailable, the test records the first real blocker and fails without retrying submission or fabricating report content.

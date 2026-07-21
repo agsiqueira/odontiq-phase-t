@@ -12,6 +12,42 @@ export type ReportStatus = "pending" | "written" | "failed";
 
 export type AuthenticatedStateUsage = "clerk-storage-state" | "storage-state-or-ui-fallback";
 
+export type AttemptStateUsed = "started" | "resumed" | "restarted" | "reused-report" | "unknown";
+
+export interface FacultyReportTranscriptEntry {
+  role: "Student" | "Patient";
+  text: string;
+  timestamp?: string;
+}
+
+export interface FacultyReportResult {
+  heading: string;
+  caseIdentity: string | null;
+  studentIdentity: string | null;
+  completedAt: string | null;
+  score: number | null;
+  scoreRange: string | null;
+  strengths: string[];
+  areasForImprovement: string[];
+  transcript: FacultyReportTranscriptEntry[];
+  sectionPresence: Record<string, boolean>;
+}
+
+export interface EncounterCompletionResult {
+  attemptStateUsed: AttemptStateUsed;
+  conversationStepCount: number;
+  completionControlLabel: string | null;
+  completionHttpStatus: number | null;
+  evaluationRequestUrl: string | null;
+  evaluationHttpStatus: number | null;
+  completionClickedAt: string | null;
+  reportNavigationAt: string | null;
+  reportHeadingVisibleAt: string | null;
+  reportGenerationDurationMs: number | null;
+  reportUrl: string | null;
+  facultyReport: FacultyReportResult | null;
+}
+
 export interface TestAssertionResult {
   id: string;
   name: string;
@@ -66,4 +102,5 @@ export interface SyntheticTestRun {
   failureUrl: string | null;
   activeStepIdAtFailure: string | null;
   errorMessage: string | null;
+  encounterCompletion?: EncounterCompletionResult;
 }

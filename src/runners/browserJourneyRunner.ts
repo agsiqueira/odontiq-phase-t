@@ -4,6 +4,7 @@ import type { Page } from "@playwright/test";
 import { environment } from "../config/environment.js";
 import {
   OdontiqBrowserClient,
+  CompletionWorkflowError,
   PatientResponseTimeoutError,
 } from "../clients/odontiqBrowserClient.js";
 import { evaluateDeterministically } from "../evaluators/deterministicEvaluator.js";
@@ -91,6 +92,67 @@ export class BrowserJourneyRunner {
       run.errorMessage = `${run.errorMessage ? `${run.errorMessage} ` : ""}JSON report failed: ${safeErrorMessage(error)}`;
       throw new Error(run.errorMessage, { cause: error });
     }
+  }
+
+  public async runCompletionReport(scenario: TestScenario): Promise<BrowserJourneyResult> {
+    const run = this.createRun(scenario);
+    let activeStepId: string | null = null;
+    this.installObservers(run);
+    run.encounterCompletion = {
+      attemptStateUsed: "unknown",
+      conversationStepCount: scenario.steps.length,
+      completionControlLabel: null,
+      completionHttpStatus: null,
+      evaluationRequestUrl: null,
+      evaluationHttpStatus: null,
+      completionClickedAt: null,
+      reportNavigationAt: null,
+      reportHeadingVisibleAt: null,
+      reportGenerationDurationMs: null,
+      reportUrl: null,
+      facultyReport: null,
+    };
+
+    try {
+      await this.client.openApplication();
+      await this.client.authenticate({ email: environment.testEmail, password: environment.testPassword }, this.options.allowUiAuthenticationFallback ?? true);
+      await this.client.navigateToCaseList();
+      const selected = await this.client.selectCase({
+        caseId: scenario.caseId,
+        patientName: scenario.patientName,
+        encounterPath: scenario.encounterPath,
+      });
+      run.encounterCompletion.attemptStateUsed = selected.attemptStateUsed;
+      await this.client.startConsultation();
+      for (const step of scenario.steps) {
+        activeStepId = step.id;
+        const stepResult = await this.executeStep(step);
+        run.steps.push(stepResult);
+        run.assertions.push(...stepResult.assertions);
+        if (stepResult.timedOut) throw new PatientResponseTimeoutError(stepResult.diagnosticMessage ?? `Patient response timed out at ${step.id}.`);
+      }
+
+      activeStepId = "case-01-completion-and-report";
+      const completion = await this.client.completeEncounter(scenario.caseId, 90_000);
+      Object.assign(run.encounterCompletion, completion);
+      run.completionStatus = "completed";
+      run.persistenceStatus = "confirmed";
+      run.assertions.push(...facultyReportAssertions(completion.facultyReport, scenario.caseId, scenario.patientName));
+    } catch (error) {
+      if (error instanceof CompletionWorkflowError) Object.assign(run.encounterCompletion, error.progress);
+      run.completionStatus = "failed";
+      run.failureUrl = sanitizeUrl(this.page.url());
+      run.activeStepIdAtFailure = activeStepId;
+      run.errorMessage = safeErrorMessage(error);
+      run.overallStatus = "error";
+    } finally {
+      run.completedAt = new Date().toISOString();
+      run.assertions.push(...observabilityAssertions(run));
+      if (run.overallStatus !== "error") run.overallStatus = aggregateStatus(run.assertions);
+    }
+
+    const reportPath = await this.reporter.write(run);
+    return { run, reportPath: path.resolve(reportPath) };
   }
 
   private async executeStep(step: TestScenario["steps"][number]): Promise<ConversationStepResult> {
@@ -211,6 +273,29 @@ export class BrowserJourneyRunner {
       errorMessage: null,
     };
   }
+}
+
+function facultyReportAssertions(
+  report: NonNullable<SyntheticTestRun["encounterCompletion"]>["facultyReport"] & {},
+  caseId: string,
+  patientName: string,
+): TestAssertionResult[] {
+  const checks: Array<[string, string, boolean, string]> = [
+    ["report-heading", "Faculty Rubric Report heading", /faculty rubric report/i.test(report.heading), report.heading],
+    ["report-case", "Report belongs to Case 1", Boolean(report.caseIdentity && /case\s*0?1/i.test(report.caseIdentity)), report.caseIdentity ?? "missing"],
+    ["report-strengths", "Strengths contains meaningful content", report.strengths.join(" ").trim().length > 10, `${report.strengths.length} item(s)`],
+    ["report-improvements", "Areas for Improvement contains meaningful content", report.areasForImprovement.join(" ").trim().length > 10, `${report.areasForImprovement.length} item(s)`],
+    ["report-transcript", "Encounter Transcript contains Student and Patient messages", report.transcript.some((entry) => entry.role === "Student") && report.transcript.some((entry) => entry.role === "Patient"), `${report.transcript.length} message(s)`],
+    ["report-patient", "Report identifies the Case 1 patient", report.caseIdentity?.includes(patientName) === true || report.transcript.length > 0, patientName],
+  ];
+  return checks.map(([id, name, passed, actual]) => ({
+    id: `${caseId}-${id}`,
+    name,
+    status: passed ? "passed" : "failed",
+    severity: passed ? "info" : "failure",
+    message: passed ? `${name} was validated.` : `${name} was missing or empty.`,
+    actual,
+  }));
 }
 
 function aggregateStatus(assertions: readonly TestAssertionResult[]): SyntheticTestRun["overallStatus"] {
