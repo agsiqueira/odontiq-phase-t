@@ -1,7 +1,7 @@
 import type { CaseBehaviorContract } from "../types/scenario.js";
 
 export const case01BehaviorContract: CaseBehaviorContract = {
-  permittedFacts: ["Amara Johnson", "severe toothache", "jaw/facial swelling", "four-day onset", "pain approximately 8/10", "feverish", "breathing or swallowing difficulty", "type 2 diabetes", "hypertension", "metformin", "lisinopril", "no known medication allergies"],
+  permittedFacts: ["Amara Johnson", "severe toothache", "jaw/facial swelling", "four-day onset", "pain approximately 8/10", "feverish", "breathing or swallowing difficulty", "type 2 diabetes", "hypertension", "metformin", "lisinopril", "no opioid or narcotic use or misuse history", "no known medication allergies"],
   firstResponseFactLimit: 4,
   stableFacts: [
     { id: "duration", label: "four-day symptom duration", acceptedPatterns: [/four days?/i, /4 days?/i], contradictionPatterns: [/\b(?:pain|ache|swelling|symptoms?|it)\b.{0,30}\b(?:started|began|for|since)\b.{0,15}\b(?:yesterday|weeks?|months?|years?)\b/i] },
@@ -9,6 +9,7 @@ export const case01BehaviorContract: CaseBehaviorContract = {
     { id: "swelling", label: "jaw or facial swelling", acceptedPatterns: [/\bswoll(?:en|ing)\b/i], contradictionPatterns: [/\b(?:no|not|haven't had|have not had)\b.{0,25}\bswoll(?:en|ing)\b/i] },
     { id: "medical-history", label: "type 2 diabetes and hypertension", acceptedPatterns: [/\bdiabetes\b/i, /\bhypertension\b/i], contradictionPatterns: [/\b(?:no|don't have|do not have)\b.{0,35}\b(?:diabetes|hypertension|medical conditions?)\b/i] },
     { id: "allergies", label: "no known medication allergies", acceptedPatterns: [/\bno known (?:medication )?allerg/i, /\bnot allergic\b/i, /\b(?:don't|do not) have (?:any )?(?:known )?(?:drug|medication)?\s*allerg/i], contradictionPatterns: [/\b(?:i am|i'm)\s+(?!not\b)allergic to\s+(?:penicillin|amoxicillin|ibuprofen|aspirin)\b/i] },
+    { id: "opioid-history", label: "no opioid use or misuse history", acceptedPatterns: [/\b(?:no|not|never|haven't|have not|don't|do not)\b.{0,55}\b(?:opioids?|opiates?|narcotics?|prescription (?:painkillers?|pain (?:medication|medicine|pills?))|misus(?:e|ed)|abus(?:e|ed)|dependen(?:ce|t)|addict(?:ion|ed))\b/i], contradictionPatterns: [/\byes\b.{0,55}\b(?:opioids?|opiates?|narcotics?|misus(?:e|ed)|dependen(?:ce|t))\b/i, /\bi(?:'ve| have| had)\s+(?!not\b|never\b|no\b).{0,45}\b(?:opioids?|opiates?|narcotics?|prescription (?:painkillers?|pain (?:medication|medicine|pills?))|misus(?:e|ed)|dependen(?:ce|t))\b/i, /\bi\s+(?:used|took|misused|abused)\b.{0,35}\b(?:opioids?|opiates?|narcotics?|prescription (?:painkillers?|pain (?:medication|medicine|pills?)))\b/i, /\bi\s+(?:was|am)\s+(?:dependent|addicted)\b.{0,25}\bopioids?\b/i], directQuestionPatterns: [/\b(?:opioids?|opiates?|narcotics?|prescription (?:painkillers?|pain (?:medication|medicine|pills?))|opioid (?:use|misuse|abuse|dependence|addiction))\b/i] },
   ],
 };
 

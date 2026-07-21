@@ -160,6 +160,22 @@ test("Case 1 allergy negation is not treated as affirmative allergy", () => {
   expect(allergies.contradictionPatterns.some((pattern) => pattern.test("I'm allergic to penicillin."))).toBe(true);
 });
 
+test("Case 1 distinguishes opioid use and misuse while rejecting affirmative history", () => {
+  const opioid = case01BehaviorContract.stableFacts.find((fact) => fact.id === "opioid-history")!;
+  for (const denial of [
+    "No, I have never used opioids.",
+    "I have not taken narcotics before.",
+    "No, I have no history of prescription opioid misuse.",
+    "I have never been dependent on opioids.",
+  ]) expect(opioid.acceptedPatterns.some((pattern) => pattern.test(denial)), denial).toBe(true);
+  for (const contradiction of [
+    "Yes, I have used opioids before.",
+    "I have a history of opioid use.",
+    "I took narcotics before.",
+    "I was dependent on opioids.",
+  ]) expect(opioid.contradictionPatterns.some((pattern) => pattern.test(contradiction)), contradiction).toBe(true);
+});
+
 test("Case 3 conditional safety-net fever language is not treated as present fever", () => {
   const result = evaluateBehaviorally({
     contract: case03BehaviorContract,
