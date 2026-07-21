@@ -14,7 +14,9 @@
     "test:cases": "playwright test tests/browser/case01-happy-path.spec.ts tests/browser/case02-happy-path.spec.ts --project=\"authenticated chromium\"",
     "test:case01-report": "playwright test tests/browser/case01-completion-report.spec.ts --project=\"authenticated chromium\"",
     "test:regression": "playwright test tests/browser/case01-happy-path.spec.ts tests/browser/case02-happy-path.spec.ts tests/browser/case01-completion-report.spec.ts --project=\"authenticated chromium\"",
+    "test:behavioral": "playwright test tests/browser/behavioral-regression.spec.ts --project=\"authenticated chromium\" --workers=1",
     "test:auth-setup": "playwright test --project=\"global setup\"",
+    "test:unit": "playwright test --project=\"unit\"",
     "test:api": "tsx src/runners/runApiTests.ts",
     "report": "playwright show-report artifacts/reports/playwright"
   },

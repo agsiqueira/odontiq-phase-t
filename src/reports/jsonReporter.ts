@@ -48,14 +48,18 @@ function sanitize(value: unknown, seen: WeakSet<object>): unknown {
   }
   seen.add(value);
   if (Array.isArray(value)) {
-    return value.map((item) => sanitize(item, seen));
+    const sanitized = value.map((item) => sanitize(item, seen));
+    seen.delete(value);
+    return sanitized;
   }
-  return Object.fromEntries(
+  const sanitized = Object.fromEntries(
     Object.entries(value).map(([key, item]) => [
       key,
       sensitiveKeyPattern.test(key) ? "[REDACTED]" : sanitize(item, seen),
     ]),
   );
+  seen.delete(value);
+  return sanitized;
 }
 
 function redactString(value: string): string {

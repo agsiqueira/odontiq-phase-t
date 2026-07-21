@@ -12,7 +12,15 @@ export type ReportStatus = "pending" | "written" | "failed";
 
 export type AuthenticatedStateUsage = "clerk-storage-state" | "storage-state-or-ui-fallback";
 
-export type AttemptStateUsed = "started" | "resumed" | "restarted" | "reused-report" | "unknown";
+export type AttemptStateUsed = "started" | "resumed" | "restarted" | "completed-report-reused" | "unknown";
+
+export interface StageTiming {
+  stage: string;
+  startedAt: string;
+  completedAt?: string;
+  durationMs?: number;
+  status: "passed" | "failed" | "timed-out";
+}
 
 export interface FacultyReportTranscriptEntry {
   role: "Student" | "Patient";
@@ -44,6 +52,7 @@ export interface EncounterCompletionResult {
   reportNavigationAt: string | null;
   reportHeadingVisibleAt: string | null;
   reportGenerationDurationMs: number | null;
+  reportExtractionDurationMs: number | null;
   reportUrl: string | null;
   facultyReport: FacultyReportResult | null;
 }
@@ -70,7 +79,13 @@ export interface ConversationStepResult {
   visibleApplicationError: string | null;
   diagnosticMessage: string | null;
   assertions: TestAssertionResult[];
+  semanticEvaluation?: SemanticTurnEvaluation | null;
+  disclosedStableFactIds?: string[];
 }
+
+export type SemanticDimensionName = "patientRoleFidelity" | "questionRelevance" | "caseConsistency" | "naturalPatientDialogue" | "artifactFree" | "disclosureCompliance" | "clinicalSafety";
+export interface SemanticDimensionResult { score: 0 | 1 | 2; reason: string; }
+export type SemanticTurnEvaluation = Record<SemanticDimensionName, SemanticDimensionResult>;
 
 export interface FailedNetworkRequest {
   method: string;
@@ -78,6 +93,22 @@ export interface FailedNetworkRequest {
   failureText: string | null;
   httpStatus: number | null;
   expectedNavigationAbort: boolean;
+}
+
+export interface EncounterSetupDiagnostics {
+  browserContextId: string;
+  requestedFreshEncounterId: string | null;
+  boundEncounterId: string | null;
+  newAttemptCreated: boolean;
+  initialTranscriptNodeCount: number;
+  initialPatientCount: number;
+  initialStudentCount: number;
+  finalPatientCount: number | null;
+  finalStudentCount: number | null;
+  workflow: "fresh-start-api";
+  setupDurationMs: number;
+  endpointFailures: string[];
+  abortedBeforeConversation: boolean;
 }
 
 export interface SyntheticTestRun {
@@ -103,4 +134,7 @@ export interface SyntheticTestRun {
   activeStepIdAtFailure: string | null;
   errorMessage: string | null;
   encounterCompletion?: EncounterCompletionResult;
+  stageTimings: StageTiming[];
+  firstFailingStage: string | null;
+  setupDiagnostics: EncounterSetupDiagnostics;
 }

@@ -12,6 +12,7 @@ export const case02HappyPath: TestScenario = {
   caseId: "case-02",
   patientName: "Marcus Lee",
   encounterPath: "/encounter/case-02",
+  attemptPolicy: "prefer-new",
   steps: [
     {
       id: "case-02-step-01-professional-opening",

@@ -44,6 +44,10 @@ export default defineConfig({
 
   projects: [
     {
+      name: "unit",
+      testMatch: /unit[\\/].*\.spec\.ts/,
+    },
+    {
       name: "global setup",
       testMatch: /auth[\\/]global\.setup\.ts/,
       use: {
@@ -59,7 +63,7 @@ export default defineConfig({
     },
     {
       name: "authenticated chromium",
-      testMatch: /browser[\\/](?:case0[12]-happy-path|case01-completion-report)\.spec\.ts/,
+      testMatch: /browser[\\/](?:case0[12]-happy-path|case01-completion-report|behavioral-regression)\.spec\.ts/,
       use: {
         ...devices["Desktop Chrome"],
         storageState: clerkAuthStatePath,

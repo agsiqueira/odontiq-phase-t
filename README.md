@@ -57,11 +57,17 @@ npm run test:case02
 # Case 1 and Case 2 regression suite
 npm run test:cases
 
+# Eight serial virtual-patient behavioral scenarios (four conversation styles per case)
+npm run test:behavioral
+
 # Complete Case 1 and validate the generated Faculty Rubric Report
 npm run test:case01-report
 
 # Conversation journeys plus completion/report regression
 npm run test:regression
+
+# Incremental message-baseline unit tests
+npm run test:unit
 
 # All browser tests
 npm run test:browser
@@ -147,3 +153,31 @@ The confirmed workflow navigates from `/encounter/case-01` to `/mentor/case-01?a
 The structured JSON result records the attempt state, conversation-step count, completion label and HTTP status, sanitized evaluation URL/status, report-generation duration, report route, visible section presence, optional numeric score/range, Strengths, Areas for Improvement, and Student/Patient transcript counts. Required sections are the Faculty Rubric Report heading, Case 1 identity, meaningful Strengths and Areas for Improvement, and an Encounter Transcript containing both roles. Exact evaluator prose and a particular score are not required.
 
 Completion artifacts use the same locations as other journeys: JSON under `artifacts/reports/runs/` and Playwright screenshots, videos, and traces under `artifacts/traces/`. If report generation is interrupted or the report API is unavailable, the test records the first real blocker and fails without retrying submission or fabricating report content.
+
+## Repeated runs and accumulated transcripts
+
+Conversation scenarios use an incremental Patient-message baseline. Before each Student message, Phase T records only the current Patient-group count, the latest Patient text, and a stable last-container identity when available. Polling then inspects at most the newest three candidate containers and accepts a response only when its count, identity, or final text is demonstrably newer than that step's baseline. Historical transcript text is not copied into ordinary journey reports.
+
+Full transcript extraction is reserved for a ready Faculty Rubric Report. It runs once, reads the report's scoped transcript list, and maps OdontIQ's visible `Provider` role back to the Phase T `Student` role. Diagnostic transcript snapshots are capped at 20 messages.
+
+Scenario attempt policies are `resume`, `prefer-new`, `require-new`, and `reuse-completed-report`. Happy paths default to `prefer-new`; completion/report uses `require-new`. Phase T uses only actions that OdontIQ actually exposes: Start and Restart produce a new attempt, while Resume is used safely when no new-attempt action is available. The chosen state is recorded as started, resumed, restarted, or completed-report-reused.
+
+Timeouts are stage-specific: encounter navigation is 15 seconds, conversation HTTP and new Patient response are 30 seconds, DOM stabilization is 5 seconds, report generation is 90 seconds, and standard visible-element rendering remains bounded by the Playwright configuration. JSON reports include authentication, case selection, encounter navigation, each conversation step, completion submission, report generation, and report extraction timings plus the first failing stage.
+
+Repeated-run checks:
+
+```powershell
+npm run test:case01 -- --headed --workers=1 --repeat-each=3 --trace=retain-on-failure
+npm run test:case02 -- --headed --workers=1 --repeat-each=3 --trace=retain-on-failure
+npm run test:cases -- --headed --workers=1 --repeat-each=2 --trace=retain-on-failure
+```
+
+## Virtual-patient behavioral regression
+
+`npm run test:behavioral` runs standard clinical, short/direct, compound/imperfect, and treatment/closing conversations for every currently supported case. The authenticated project remains serial because all journeys share one Clerk account and server-side attempt history.
+
+Every newly correlated Patient turn is checked independently for strong provider-role language, serialized JSON or markup, prompt/tool metadata, placeholders, code fences, malformed Unicode, repeated sentence blocks, excessive punctuation, truncation, excessive length, immediate verbatim repetition, configured topic relevance, and conservative contradictions of stable case facts. Hard defects fail the journey; less certain mechanical-quality signals are warnings and remain visible in the JSON report.
+
+Case contracts contain only facts confirmed through black-box behavior. No progressive-disclosure rule is enforced unless a reliable reveal boundary is configured; unsupported assumptions are deliberately omitted. A first-response fact-volume check is a warning rather than a failure.
+
+An optional independent semantic evaluator can be enabled with `PHASE_T_SEMANTIC_EVALUATOR_URL` and, if needed, `PHASE_T_SEMANTIC_EVALUATOR_KEY`. It receives only the case identifier, permitted evaluation facts, the latest three run-local turns, the current Student message, and its correlated Patient response. It must return strict JSON scores for `patientRoleFidelity`, `questionRelevance`, `caseConsistency`, `naturalPatientDialogue`, `artifactFree`, `disclosureCompliance`, and `clinicalSafety`. Semantic evaluation is disabled when no URL is configured and never receives Clerk state, credentials, cookies, or unrelated accumulated transcripts.

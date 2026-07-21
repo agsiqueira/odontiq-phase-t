@@ -13,6 +13,7 @@ export const case01CompletionReport: TestScenario = {
   caseId: "case-01",
   patientName: "Amara Johnson",
   encounterPath: "/encounter/case-01",
+  attemptPolicy: "require-new",
   steps: [
     { id: "case-01-report-01-introduction", studentMessage: "Hello Amara, I am your dental clinician today. What is bothering you most?", expectation },
     { id: "case-01-report-02-history", studentMessage: "When did the tooth pain and swelling begin, and how severe is the pain?", expectation },

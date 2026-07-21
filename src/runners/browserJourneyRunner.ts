@@ -8,6 +8,8 @@ import {
   PatientResponseTimeoutError,
 } from "../clients/odontiqBrowserClient.js";
 import { evaluateDeterministically } from "../evaluators/deterministicEvaluator.js";
+import { collectDisclosedStableFacts, evaluateBehaviorally } from "../evaluators/behavioralEvaluator.js";
+import { evaluateSemantically } from "../evaluators/semanticEvaluator.js";
 import { JsonReporter } from "../reports/jsonReporter.js";
 import type { TestScenario } from "../types/scenario.js";
 import type {
@@ -45,24 +47,51 @@ export class BrowserJourneyRunner {
     this.installObservers(run);
 
     try {
+      activeStepId = "authentication-reuse";
+      const authenticationStartedAt = new Date().toISOString();
+      const authenticationStartedMs = Date.now();
       await this.client.openApplication();
       await this.client.authenticate({
         email: environment.testEmail,
         password: environment.testPassword,
       }, this.options.allowUiAuthenticationFallback ?? true);
+      run.stageTimings.push({ stage: "authentication-reuse", startedAt: authenticationStartedAt, completedAt: new Date().toISOString(), durationMs: Date.now() - authenticationStartedMs, status: "passed" });
+      activeStepId = "fresh-attempt-setup";
+      const setupStartedMs = Date.now();
+      const fresh = await this.client.createFreshEncounter(scenario.caseId);
+      run.setupDiagnostics.requestedFreshEncounterId = fresh.encounterId;
+      run.setupDiagnostics.newAttemptCreated = true;
+      activeStepId = "case-selection";
+      // Clerk may transiently redirect a long sequential run after the API setup call.
+      // Revalidate the persisted test session at the protected route before selecting.
+      await this.client.authenticate({
+        email: environment.testEmail,
+        password: environment.testPassword,
+      }, this.options.allowUiAuthenticationFallback ?? true);
       await this.client.navigateToCaseList();
-      await this.client.selectCase({
+      const selected = await this.client.selectCase({
         caseId: scenario.caseId,
         patientName: scenario.patientName,
         encounterPath: scenario.encounterPath,
+        attemptPolicy: scenario.attemptPolicy,
       });
+      this.recordSelectionTimings(run, selected);
       await this.client.startConsultation();
+      const verified = await this.client.verifyFreshEncounter(fresh.encounterId);
+      Object.assign(run.setupDiagnostics, {
+        boundEncounterId: verified.boundEncounterId,
+        initialTranscriptNodeCount: verified.transcriptCount,
+        initialPatientCount: verified.patientCount,
+        initialStudentCount: verified.studentCount,
+        setupDurationMs: Date.now() - setupStartedMs,
+      });
 
       for (const step of scenario.steps) {
         activeStepId = step.id;
-        const stepResult = await this.executeStep(step);
+        const stepResult = await this.executeStep(step, scenario, run.steps);
         run.steps.push(stepResult);
         run.assertions.push(...stepResult.assertions);
+        run.stageTimings.push(stepTiming(stepResult));
         if (stepResult.timedOut) {
           throw new PatientResponseTimeoutError(
             stepResult.diagnosticMessage ??
@@ -74,8 +103,15 @@ export class BrowserJourneyRunner {
       run.failureUrl = sanitizeUrl(this.page.url());
       run.activeStepIdAtFailure = activeStepId;
       run.errorMessage = safeErrorMessage(error);
+      run.firstFailingStage = activeStepId ?? "journey-setup";
       run.overallStatus = "error";
     } finally {
+      const finalCounts = await this.client.conversationCounts().catch(() => null);
+      if (finalCounts) {
+        run.setupDiagnostics.finalPatientCount = finalCounts.patientCount;
+        run.setupDiagnostics.finalStudentCount = finalCounts.studentCount;
+      }
+      run.setupDiagnostics.abortedBeforeConversation = run.steps.length === 0 && run.overallStatus === "error";
       run.completedAt = new Date().toISOString();
       run.assertions.push(...observabilityAssertions(run));
       if (run.overallStatus !== "error") {
@@ -109,26 +145,35 @@ export class BrowserJourneyRunner {
       reportNavigationAt: null,
       reportHeadingVisibleAt: null,
       reportGenerationDurationMs: null,
+      reportExtractionDurationMs: null,
       reportUrl: null,
       facultyReport: null,
     };
 
     try {
+      activeStepId = "authentication-reuse";
+      const authenticationStartedAt = new Date().toISOString();
+      const authenticationStartedMs = Date.now();
       await this.client.openApplication();
       await this.client.authenticate({ email: environment.testEmail, password: environment.testPassword }, this.options.allowUiAuthenticationFallback ?? true);
+      run.stageTimings.push({ stage: "authentication-reuse", startedAt: authenticationStartedAt, completedAt: new Date().toISOString(), durationMs: Date.now() - authenticationStartedMs, status: "passed" });
+      activeStepId = "case-selection";
       await this.client.navigateToCaseList();
       const selected = await this.client.selectCase({
         caseId: scenario.caseId,
         patientName: scenario.patientName,
         encounterPath: scenario.encounterPath,
+        attemptPolicy: scenario.attemptPolicy,
       });
+      this.recordSelectionTimings(run, selected);
       run.encounterCompletion.attemptStateUsed = selected.attemptStateUsed;
       await this.client.startConsultation();
       for (const step of scenario.steps) {
         activeStepId = step.id;
-        const stepResult = await this.executeStep(step);
+        const stepResult = await this.executeStep(step, scenario, run.steps);
         run.steps.push(stepResult);
         run.assertions.push(...stepResult.assertions);
+        run.stageTimings.push(stepTiming(stepResult));
         if (stepResult.timedOut) throw new PatientResponseTimeoutError(stepResult.diagnosticMessage ?? `Patient response timed out at ${step.id}.`);
       }
 
@@ -137,6 +182,11 @@ export class BrowserJourneyRunner {
       Object.assign(run.encounterCompletion, completion);
       run.completionStatus = "completed";
       run.persistenceStatus = "confirmed";
+      run.stageTimings.push(
+        { stage: "completion-submission", startedAt: completion.completionClickedAt, completedAt: completion.reportNavigationAt, durationMs: Date.parse(completion.reportNavigationAt) - Date.parse(completion.completionClickedAt), status: "passed" },
+        { stage: "report-generation", startedAt: completion.completionClickedAt, completedAt: completion.reportHeadingVisibleAt, durationMs: completion.reportGenerationDurationMs, status: "passed" },
+        { stage: "report-extraction", startedAt: completion.reportHeadingVisibleAt, completedAt: new Date(Date.parse(completion.reportHeadingVisibleAt) + completion.reportExtractionDurationMs).toISOString(), durationMs: completion.reportExtractionDurationMs, status: "passed" },
+      );
       run.assertions.push(...facultyReportAssertions(completion.facultyReport, scenario.caseId, scenario.patientName));
     } catch (error) {
       if (error instanceof CompletionWorkflowError) Object.assign(run.encounterCompletion, error.progress);
@@ -144,6 +194,7 @@ export class BrowserJourneyRunner {
       run.failureUrl = sanitizeUrl(this.page.url());
       run.activeStepIdAtFailure = activeStepId;
       run.errorMessage = safeErrorMessage(error);
+      run.firstFailingStage = activeStepId ?? "completion-setup";
       run.overallStatus = "error";
     } finally {
       run.completedAt = new Date().toISOString();
@@ -155,7 +206,7 @@ export class BrowserJourneyRunner {
     return { run, reportPath: path.resolve(reportPath) };
   }
 
-  private async executeStep(step: TestScenario["steps"][number]): Promise<ConversationStepResult> {
+  private async executeStep(step: TestScenario["steps"][number], scenario: TestScenario, priorSteps: readonly ConversationStepResult[]): Promise<ConversationStepResult> {
     const startedAt = new Date().toISOString();
     let response: string | null = null;
     let elapsedResponseTimeMs = 0;
@@ -165,15 +216,13 @@ export class BrowserJourneyRunner {
     let diagnosticMessage: string | null = null;
 
     const {
-      previousPatientMessageCount,
-      previousLastPatientMessageText,
+      baseline,
       sentAt,
       conversationResponseStatus,
     } = await this.client.sendStudentMessage(step.studentMessage);
     try {
       const interaction = await this.client.waitForNextPatientResponse(
-        previousPatientMessageCount,
-        previousLastPatientMessageText,
+        baseline,
         sentAt,
         step.expectation.maximumResponseTimeMs,
         conversationResponseStatus,
@@ -200,6 +249,34 @@ export class BrowserJourneyRunner {
       visibleApplicationError,
       expectation: step.expectation,
     });
+    assertions.push(...evaluateBehaviorally({
+      stepId: step.id,
+      stepIndex: priorSteps.length,
+      studentMessage: step.studentMessage,
+      response,
+      previousPatientResponse: priorSteps.at(-1)?.patientResponse ?? undefined,
+      expectation: step.expectation,
+      contract: scenario.caseContract,
+    }));
+
+    let semanticEvaluation = null;
+    if (response) {
+      semanticEvaluation = await evaluateSemantically({
+        caseId: scenario.caseId,
+        permittedFacts: scenario.caseContract?.permittedFacts ?? [],
+        recentConversation: priorSteps.slice(-3).flatMap((item) => [
+          { role: "Student" as const, text: item.studentMessage },
+          ...(item.patientResponse ? [{ role: "Patient" as const, text: item.patientResponse }] : []),
+        ]),
+        studentMessage: step.studentMessage,
+        patientResponse: response,
+      });
+      if (semanticEvaluation) {
+        for (const [dimension, result] of Object.entries(semanticEvaluation)) {
+          assertions.push({ id: `${step.id}-semantic-${dimension}`, name: `Semantic: ${dimension}`, status: result.score === 0 ? "failed" : "passed", severity: result.score === 0 ? "failure" : result.score === 1 ? "warning" : "info", message: result.reason, expected: 2, actual: result.score });
+        }
+      }
+    }
 
     return {
       stepId: step.id,
@@ -213,6 +290,11 @@ export class BrowserJourneyRunner {
       visibleApplicationError,
       diagnosticMessage,
       assertions,
+      semanticEvaluation,
+      disclosedStableFactIds: collectDisclosedStableFacts(scenario.caseContract, [
+        ...priorSteps.flatMap((item) => item.patientResponse ? [item.patientResponse] : []),
+        ...(response ? [response] : []),
+      ]),
     };
   }
 
@@ -271,8 +353,42 @@ export class BrowserJourneyRunner {
       failureUrl: null,
       activeStepIdAtFailure: null,
       errorMessage: null,
+      stageTimings: [],
+      firstFailingStage: null,
+      setupDiagnostics: {
+        browserContextId: randomUUID(),
+        requestedFreshEncounterId: null,
+        boundEncounterId: null,
+        newAttemptCreated: false,
+        initialTranscriptNodeCount: 0,
+        initialPatientCount: 0,
+        initialStudentCount: 0,
+        finalPatientCount: null,
+        finalStudentCount: null,
+        workflow: "fresh-start-api",
+        setupDurationMs: 0,
+        endpointFailures: [],
+        abortedBeforeConversation: false,
+      },
     };
   }
+
+  private recordSelectionTimings(run: SyntheticTestRun, selected: Awaited<ReturnType<OdontiqBrowserClient["selectCase"]>>): void {
+    run.stageTimings.push(
+      { stage: "case-selection", startedAt: selected.caseSelectionStartedAt, completedAt: new Date(Date.parse(selected.caseSelectionStartedAt) + selected.caseSelectionDurationMs).toISOString(), durationMs: selected.caseSelectionDurationMs, status: "passed" },
+      { stage: "encounter-navigation", startedAt: selected.encounterNavigationStartedAt, completedAt: new Date(Date.parse(selected.encounterNavigationStartedAt) + selected.encounterNavigationDurationMs).toISOString(), durationMs: selected.encounterNavigationDurationMs, status: "passed" },
+    );
+  }
+}
+
+function stepTiming(step: ConversationStepResult) {
+  return {
+    stage: `conversation:${step.stepId}`,
+    startedAt: step.startedAt,
+    completedAt: step.completedAt,
+    durationMs: Date.parse(step.completedAt) - Date.parse(step.startedAt),
+    status: step.timedOut ? "timed-out" as const : "passed" as const,
+  };
 }
 
 function facultyReportAssertions(

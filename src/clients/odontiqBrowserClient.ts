@@ -8,6 +8,7 @@ import type {
   FacultyReportResult,
   FacultyReportTranscriptEntry,
 } from "../types/testResult.js";
+import { isNewerThanBaseline, retainNewerState, type LatestMessageState, type MessageBaseline } from "./messageBaseline.js";
 
 export class OdontiqBrowserInteractionError extends Error {
   public constructor(
@@ -47,11 +48,16 @@ export interface CaseSelection {
   caseId: string;
   patientName: string;
   encounterPath: string;
+  attemptPolicy?: "resume" | "prefer-new" | "require-new" | "reuse-completed-report";
 }
 
 export interface SelectedCaseResult {
   attemptStateUsed: AttemptStateUsed;
   actionLabel: string;
+  caseSelectionStartedAt: string;
+  caseSelectionDurationMs: number;
+  encounterNavigationStartedAt: string;
+  encounterNavigationDurationMs: number;
 }
 
 export interface CompletedEncounterResult {
@@ -63,6 +69,7 @@ export interface CompletedEncounterResult {
   reportNavigationAt: string;
   reportHeadingVisibleAt: string;
   reportGenerationDurationMs: number;
+  reportExtractionDurationMs: number;
   reportUrl: string;
   facultyReport: FacultyReportResult;
 }
@@ -81,10 +88,14 @@ interface ConversationSnapshot {
 }
 
 interface SentStudentMessage {
-  previousPatientMessageCount: number;
-  previousLastPatientMessageText: string | null;
+  baseline: MessageBaseline;
   sentAt: number;
   conversationResponseStatus: Promise<number | null>;
+}
+
+export interface FreshEncounterSetup {
+  encounterId: string;
+  endpointStatus: number;
 }
 
 export class OdontiqBrowserClient {
@@ -160,9 +171,63 @@ export class OdontiqBrowserClient {
     }
   }
 
+  public async createFreshEncounter(caseId: string): Promise<FreshEncounterSetup> {
+    const result = await this.page.evaluate(async (targetCaseId) => {
+      sessionStorage.clear();
+      for (let index = localStorage.length - 1; index >= 0; index -= 1) {
+        const key = localStorage.key(index);
+        if (key && /encounter|attempt|selected.?case/i.test(key)) localStorage.removeItem(key);
+      }
+      const response = await fetch("/api/encounters/start", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ caseId: targetCaseId, fresh: true }),
+      });
+      const body = await response.json().catch(() => null) as { id?: unknown } | null;
+      return { status: response.status, id: typeof body?.id === "string" ? body.id : null };
+    }, caseId);
+    if (result.status >= 400 || !result.id) {
+      throw new OdontiqBrowserInteractionError(`Fresh encounter creation failed with HTTP ${result.status}.`, "fresh-encounter");
+    }
+    return { encounterId: result.id, endpointStatus: result.status };
+  }
+
+  public async verifyFreshEncounter(expectedEncounterId: string, maximumInitialMessages = 6) {
+    const root = selectors.encounterRoot(this.page).first();
+    await expect.poll(() => root.getAttribute("data-server-encounter-id"), {
+      timeout: 15_000,
+      message: "Waiting for the encounter page to bind the fresh server encounter",
+    }).toBe(expectedEncounterId);
+    const boundEncounterId = await root.getAttribute("data-server-encounter-id");
+    const patientCount = await selectors.conversationMessageGroups(this.page, "Patient").count();
+    const studentCount = await selectors.conversationMessageGroups(this.page, "Student").count();
+    const transcriptCount = patientCount + studentCount;
+    if (transcriptCount > maximumInitialMessages) {
+      throw new OdontiqBrowserInteractionError(
+        `Fresh-attempt isolation failed: initial transcript has ${transcriptCount} nodes (Patient ${patientCount}, Student ${studentCount}), above the safe bound ${maximumInitialMessages}.`,
+        "verify-fresh-encounter",
+      );
+    }
+    return { boundEncounterId, patientCount, studentCount, transcriptCount };
+  }
+
+  public async conversationCounts() {
+    const [patientCount, studentCount] = await Promise.all([
+      selectors.conversationMessageGroups(this.page, "Patient").count(),
+      selectors.conversationMessageGroups(this.page, "Student").count(),
+    ]);
+    return { patientCount, studentCount };
+  }
+
   public async selectCase(selection: CaseSelection): Promise<SelectedCaseResult> {
     const { caseId, patientName, encounterPath } = selection;
     try {
+      if (selection.attemptPolicy === "prefer-new" || selection.attemptPolicy === "require-new") {
+        await this.clearIncompleteTestSnapshot(caseId);
+        await this.page.reload({ waitUntil: "domcontentloaded" });
+      }
+      const caseSelectionStartedAt = new Date().toISOString();
+      const caseSelectionStartedMs = Date.now();
       const cards = selectors.caseCard(this.page, caseId, patientName);
       await cards.first().waitFor({ state: "visible" });
       const cardCount = await cards.count();
@@ -186,9 +251,12 @@ export class OdontiqBrowserClient {
       }
 
       const actionText = (await action.innerText()).trim();
-      const actionLabel = actionText.match(/(?:start|resume|restart) case/i)?.[0] ?? actionText;
+      const actionLabel = actionText.match(/(?:start|resume|restart|retry) case/i)?.[0] ?? actionText;
+      const caseSelectionDurationMs = Date.now() - caseSelectionStartedMs;
+      const encounterNavigationStartedAt = new Date().toISOString();
+      const encounterNavigationStartedMs = Date.now();
       await action.click();
-      await this.page.waitForURL(selectors.caseEncounterUrlPattern(encounterPath));
+      await this.page.waitForURL(selectors.caseEncounterUrlPattern(encounterPath), { timeout: 15_000 });
       if (!selectors.caseEncounterUrlPattern(encounterPath).test(this.page.url())) {
         throw new Error(`The case action opened a different route: ${this.page.url()}.`);
       }
@@ -199,9 +267,13 @@ export class OdontiqBrowserClient {
           ? "started"
           : /^resume case$/i.test(actionLabel)
             ? "resumed"
-            : /^restart case$/i.test(actionLabel)
+            : /^(?:restart|retry) case$/i.test(actionLabel)
               ? "restarted"
               : "unknown",
+        caseSelectionStartedAt,
+        caseSelectionDurationMs,
+        encounterNavigationStartedAt,
+        encounterNavigationDurationMs: Date.now() - encounterNavigationStartedMs,
       };
     } catch (error) {
       const diagnostics = await this.collectCaseSelectionDiagnostics(selection);
@@ -211,6 +283,23 @@ export class OdontiqBrowserClient {
         error,
       );
     }
+  }
+
+  private async clearIncompleteTestSnapshot(caseId: string): Promise<void> {
+    await this.page.evaluate((targetCaseId) => {
+      for (let index = 0; index < localStorage.length; index += 1) {
+        const key = localStorage.key(index);
+        if (!key?.endsWith(":encounterSnapshots") && key !== "odontiq:encounterSnapshots") continue;
+        try {
+          const snapshots = JSON.parse(localStorage.getItem(key) ?? "{}") as Record<string, unknown>;
+          if (!(targetCaseId in snapshots)) continue;
+          delete snapshots[targetCaseId];
+          localStorage.setItem(key, JSON.stringify(snapshots));
+        } catch {
+          // Leave malformed or unrelated browser storage untouched.
+        }
+      }
+    }, caseId);
   }
 
   public async startConsultation(): Promise<void> {
@@ -227,7 +316,13 @@ export class OdontiqBrowserClient {
   }
 
   public async sendStudentMessage(message: string): Promise<SentStudentMessage> {
-    const previousPatientMessages = await this.readConversationSnapshot("Patient");
+    const baselineState = await this.readLatestConversationMessage("Patient");
+    const baseline: MessageBaseline = {
+      patientMessageCount: baselineState.count,
+      lastPatientText: baselineState.text,
+      lastPatientContainerIdentity: baselineState.containerIdentity,
+      capturedAt: new Date().toISOString(),
+    };
     try {
       await selectors.messageInput(this.page).first().fill(message);
       const conversationResponseStatus = this.page.waitForResponse(
@@ -235,12 +330,12 @@ export class OdontiqBrowserClient {
           const url = new URL(response.url());
           return response.request().method() === "POST" && url.pathname === "/api/conversation";
         },
+        { timeout: 30_000 },
       ).then((response) => response.status()).catch(() => null);
       const sentAt = Date.now();
       await selectors.sendButton(this.page).first().click();
       return {
-        previousPatientMessageCount: previousPatientMessages.count,
-        previousLastPatientMessageText: previousPatientMessages.lastText,
+        baseline,
         sentAt,
         conversationResponseStatus,
       };
@@ -250,21 +345,16 @@ export class OdontiqBrowserClient {
   }
 
   public async waitForNextPatientResponse(
-    previousPatientMessageCount: number,
-    previousLastPatientMessageText: string | null,
+    baseline: MessageBaseline,
     sentAt: number,
     timeoutMs: number,
     conversationResponseStatus: Promise<number | null>,
   ): Promise<PatientInteractionResult> {
-    let latestSnapshot = await this.readConversationSnapshot("Patient");
+    let latest = await this.readLatestConversationMessage("Patient");
     try {
       await expect.poll(async () => {
-        latestSnapshot = await this.readConversationSnapshot("Patient");
-        const countIncreased = latestSnapshot.count > previousPatientMessageCount;
-        const lastTextChanged = Boolean(
-          latestSnapshot.lastText && latestSnapshot.lastText !== previousLastPatientMessageText,
-        );
-        return countIncreased || lastTextChanged;
+        latest = await this.readLatestConversationMessage("Patient");
+        return isNewerThanBaseline(baseline, latest);
       }, {
         message: "Waiting for a new role-scoped Patient message group",
         timeout: timeoutMs,
@@ -273,15 +363,17 @@ export class OdontiqBrowserClient {
 
       // A stable value across consecutive polls is used as a generic streaming
       // completion signal until OdontIQ exposes an explicit response-complete marker.
-      let previousText = latestSnapshot.lastText ?? "";
+      let accepted = latest;
+      let previousText = accepted.text ?? "";
       let stablePolls = 0;
       await expect.poll(async () => {
-        latestSnapshot = await this.readConversationSnapshot("Patient");
-        const currentText = latestSnapshot.lastText ?? "";
+        const candidate = await this.readLatestConversationMessage("Patient");
+        accepted = retainNewerState(baseline, accepted, candidate);
+        const currentText = accepted.text ?? "";
         stablePolls = currentText.length > 0 && currentText === previousText ? stablePolls + 1 : 0;
         previousText = currentText;
         return stablePolls;
-      }, { timeout: timeoutMs, intervals: [250, 500, 750] }).toBeGreaterThanOrEqual(2);
+      }, { timeout: 5_000, intervals: [250, 500, 750] }).toBeGreaterThanOrEqual(2);
 
       return {
         response: previousText,
@@ -290,10 +382,10 @@ export class OdontiqBrowserClient {
         visibleApplicationError: await this.detectVisibleApplicationError(),
       };
     } catch (error) {
-      const postSendSnapshot = await this.readConversationSnapshot("Patient");
+      const postSendSnapshot = await this.readConversationSnapshot("Patient", 20);
       const status = await conversationResponseStatus;
       const diagnostics = await this.collectPatientResponseDiagnostics(
-        previousPatientMessageCount,
+        baseline.patientMessageCount,
         postSendSnapshot,
         status,
       );
@@ -377,7 +469,9 @@ export class OdontiqBrowserClient {
       const reportHeadingVisibleAt = new Date().toISOString();
       progress.reportHeadingVisibleAt = reportHeadingVisibleAt;
       progress.reportGenerationDurationMs = Date.now() - startedAt;
+      const extractionStartedAt = Date.now();
       const facultyReport = await this.extractFacultyReport();
+      const reportExtractionDurationMs = Date.now() - extractionStartedAt;
       return {
         completionControlLabel,
         completionHttpStatus: patchResponse?.status() ?? null,
@@ -387,6 +481,7 @@ export class OdontiqBrowserClient {
         reportNavigationAt,
         reportHeadingVisibleAt,
         reportGenerationDurationMs: progress.reportGenerationDurationMs,
+        reportExtractionDurationMs,
         reportUrl: sanitizeBrowserUrl(this.page.url()),
         facultyReport,
       };
@@ -516,11 +611,31 @@ export class OdontiqBrowserClient {
     ].join(" ");
   }
 
-  private async readConversationSnapshot(role: ConversationRole): Promise<ConversationSnapshot> {
+  private async readLatestConversationMessage(role: ConversationRole): Promise<LatestMessageState> {
+    const groups = selectors.conversationMessageGroups(this.page, role);
+    const count = await groups.count();
+    const lowerBound = Math.max(0, count - 3);
+    for (let index = count - 1; index >= lowerBound; index -= 1) {
+      const group = groups.nth(index);
+      if (!(await group.isVisible().catch(() => false))) continue;
+      const testId = await group.getAttribute("data-testid");
+      if (!testId && await selectors.conversationGroupRoleLabel(group, role).count() !== 1) continue;
+      const text = await this.extractConversationMessageBody(group, role, Boolean(testId));
+      if (!text) continue;
+      const stableIdentity = await group.getAttribute("data-message-id")
+        ?? await group.getAttribute("id")
+        ?? `${role.toLowerCase()}-${index}`;
+      return { count, text, containerIdentity: stableIdentity };
+    }
+    return { count };
+  }
+
+  private async readConversationSnapshot(role: ConversationRole, maximumMessages = 20): Promise<ConversationSnapshot> {
     const groups = selectors.conversationMessageGroups(this.page, role);
     const messages: string[] = [];
     const groupCount = await groups.count();
-    for (let index = 0; index < groupCount; index += 1) {
+    const firstIndex = Math.max(0, groupCount - maximumMessages);
+    for (let index = firstIndex; index < groupCount; index += 1) {
       const group = groups.nth(index);
       if (!(await group.isVisible().catch(() => false))) continue;
 
@@ -578,7 +693,8 @@ export class OdontiqBrowserClient {
       .or(selectors.conversationRoleLabels(this.page, "Patient"));
     const visibleLabels: string[] = [];
     const labelCount = await labels.count();
-    for (let index = 0; index < labelCount; index += 1) {
+    const firstLabelIndex = Math.max(0, labelCount - 20);
+    for (let index = firstLabelIndex; index < labelCount; index += 1) {
       const label = labels.nth(index);
       if (await label.isVisible().catch(() => false)) {
         visibleLabels.push((await label.innerText()).trim());

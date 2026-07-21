@@ -75,8 +75,8 @@ export const selectors = {
     ),
 
   caseRestartAction: (card: Locator, encounterPath: string): Locator =>
-    card.getByRole("button", { name: /^restart case$/i }).or(
-      card.locator(`a[href="${encounterPath}"]`).filter({ hasText: /restart case/i }),
+    card.getByRole("button", { name: /^(?:restart|retry) case$/i }).or(
+      card.locator(`a[href="${encounterPath}"]`).filter({ hasText: /(?:restart|retry) case/i }),
     ),
 
   caseAction: (card: Locator, encounterPath: string): Locator =>
@@ -85,7 +85,7 @@ export const selectors = {
       .or(selectors.caseRestartAction(card, encounterPath)),
 
   visibleCaseActionLabels: (page: Page): Locator =>
-    page.getByText(/^(?:start|resume|restart) case$/i, { exact: true }),
+    page.getByText(/^(?:start|resume|restart|retry) case$/i, { exact: true }),
 
   caseEncounterUrlPattern: (encounterPath: string): RegExp =>
     new RegExp(`${escapeRegExp(encounterPath)}(?:[/?#]|$)`, "i"),
@@ -97,6 +97,8 @@ export const selectors = {
     })
       .or(page.getByText(patientName, { exact: true }))
       .or(page.getByText(new RegExp(`^case\\s*0?${caseId.replace(/\D/g, "")}$`, "i"))),
+
+  encounterRoot: (page: Page): Locator => page.getByTestId("encounter-root"),
 
   startConsultationButton: (page: Page): Locator =>
     page.getByTestId("start-consultation-button").or(
@@ -119,10 +121,7 @@ export const selectors = {
     page.getByText(role, { exact: true }),
 
   conversationMessageGroups: (page: Page, role: ConversationRole): Locator =>
-    page.getByTestId(`${role.toLocaleLowerCase()}-message`).or(
-      // Confirmed DOM fallback: the exact role <p> and message-body <p> share one direct parent <div>.
-      selectors.conversationRoleLabels(page, role).locator(".."),
-    ),
+    page.locator(`[data-testid="${role.toLocaleLowerCase()}-message"]`),
 
   conversationGroupRoleLabel: (group: Locator, role: ConversationRole): Locator =>
     group.locator(":scope > p").filter({ hasText: new RegExp(`^${role}$`, "i") }),
