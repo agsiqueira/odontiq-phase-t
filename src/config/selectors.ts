@@ -151,7 +151,8 @@ export const selectors = {
 
   reportTranscriptToggle: (page: Page): Locator =>
     page.getByRole("button", { name: /encounter transcript/i })
-      .or(page.getByRole("link", { name: /encounter transcript/i })),
+      .or(page.getByRole("link", { name: /encounter transcript/i }))
+      .or(page.getByRole("heading", { name: /encounter transcript/i })),
 
   reportErrorMarker: (page: Page): Locator =>
     page.getByText(/no completed encounter was found|report unavailable|report generation was interrupted|report not found|failed to generate/i),

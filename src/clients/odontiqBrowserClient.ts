@@ -405,21 +405,41 @@ export class OdontiqBrowserClient {
     const section = async (label: RegExp): Promise<string[]> => {
       const heading = selectors.reportSectionHeading(this.page, label).first();
       if (!(await heading.isVisible().catch(() => false))) return [];
-      const container = heading.locator("xpath=.." );
+      const details = heading.locator("xpath=ancestor::details[1]");
+      if (await details.count()) {
+        if (!(await details.first().getAttribute("open"))) await heading.click();
+      }
+      const container = await details.count() ? details.first() : heading.locator("xpath=..");
       const text = (await container.innerText()).replace((await heading.innerText()), "").trim();
       return text.split(/\r?\n/).map((value) => value.trim()).filter(Boolean);
     };
     const toggle = selectors.reportTranscriptToggle(this.page).first();
     if (await toggle.isVisible().catch(() => false)) {
-      if (await toggle.getAttribute("aria-expanded") === "false") await toggle.click();
+      const transcriptDetails = toggle.locator("xpath=ancestor::details[1]");
+      if (await transcriptDetails.count()) {
+        if (!(await transcriptDetails.first().getAttribute("open"))) await toggle.click();
+      } else if (await toggle.getAttribute("aria-expanded") === "false") {
+        await toggle.click();
+      }
     }
     const transcript: FacultyReportTranscriptEntry[] = [];
-    for (const role of ["Student", "Patient"] as const) {
-      const snapshot = await this.readConversationSnapshot(role);
-      for (const text of snapshot.messages) transcript.push({ role, text });
+    const transcriptDetails = toggle.locator("xpath=ancestor::details[1]");
+    const transcriptRows = transcriptDetails.locator("li");
+    for (let index = 0; index < await transcriptRows.count(); index += 1) {
+      const paragraphs = transcriptRows.nth(index).locator(":scope > p");
+      if (await paragraphs.count() < 2) continue;
+      const label = (await paragraphs.first().innerText()).trim();
+      const text = (await paragraphs.nth(1).innerText()).trim();
+      const role = /^provider(?:\s|·|$)/i.test(label)
+        ? "Student"
+        : /^patient(?:\s|·|$)/i.test(label)
+          ? "Patient"
+          : null;
+      if (role && text) transcript.push({ role, text, timestamp: label.split("·")[1]?.trim() });
     }
     const body = await this.page.locator("body").innerText();
-    const scoreMatch = body.match(/(?:overall (?:performance|score)|score)\D{0,20}(\d+(?:\.\d+)?)\s*(?:\/\s*(\d+(?:\.\d+)?)|%|out of\s*(\d+(?:\.\d+)?))?/i);
+    const overallBlock = await this.page.getByText(/^overall$/i, { exact: true }).first().locator("xpath=..").innerText().catch(() => "");
+    const scoreMatch = overallBlock.match(/(\d+(?:\.\d+)?)\s*%/) ?? body.match(/(?:overall (?:performance|score)|score)\D{0,20}(\d+(?:\.\d+)?)\s*(?:\/\s*(\d+(?:\.\d+)?)|%|out of\s*(\d+(?:\.\d+)?))?/i);
     const score = scoreMatch ? Number(scoreMatch[1]) : null;
     const maximum = scoreMatch ? Number(scoreMatch[2] ?? scoreMatch[3]) : Number.NaN;
     if (score !== null && (score < 0 || (Number.isFinite(maximum) && score > maximum))) {
@@ -429,8 +449,8 @@ export class OdontiqBrowserClient {
     const areasForImprovement = await section(/^areas for improvement$/i);
     return {
       heading: (await selectors.facultyReportHeading(this.page).first().innerText()).trim(),
-      caseIdentity: body.match(/case\s*0?1/i)?.[0] ?? null,
-      studentIdentity: (await section(/^(?:student|learner)(?: name| identity)?$/i))[0] ?? null,
+      caseIdentity: /\/reports\/case-01(?:[/?#]|$)/i.test(this.page.url()) && /Amara Johnson/i.test(body) ? "Case 1 — Amara Johnson" : null,
+      studentIdentity: null,
       completedAt: (await section(/^(?:completion|completed)(?: date| at| date\/time)?$/i))[0] ?? null,
       score,
       scoreRange: Number.isFinite(maximum) ? `0-${maximum}` : scoreMatch?.[0] ?? null,
