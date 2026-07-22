@@ -193,7 +193,9 @@ function immediateContradictionTopic(value: string): string | null {
     if (polarities.includes("affirmed") && polarities.includes("negated")) return topic;
   }
   const airway = interpretAirwayFactPolarities(value);
-  if (airway.breathing.includes("affirmed") && airway.breathing.includes("negated")) return "breathing difficulty";
+  const resolvedPositionalBreathing = /\b(?:no|not)\b.{0,45}\b(?:short of breath|trouble breathing|breath(?:ing)?)\b.{0,35}\b(?:sitting|upright)\b|\b(?:sitting|upright)\b.{0,35}\b(?:no|not|normally|fine|okay)\b/i.test(value)
+    && /\b(?:lie|lying|flat|down|back)\b.{0,45}\b(?:short of breath|trouble breathing|hard to breathe|chok(?:e|ing))\b|\b(?:short of breath|trouble breathing|hard to breathe|chok(?:e|ing))\b.{0,45}\b(?:lie|lying|flat|down|back)\b/i.test(value);
+  if (!resolvedPositionalBreathing && airway.breathing.includes("affirmed") && airway.breathing.includes("negated")) return "breathing difficulty";
   if (airway.swallowing.includes("affirmed") && airway.swallowing.includes("negated")) return "swallowing difficulty";
   return null;
 }

@@ -142,6 +142,16 @@ test("keeps the canonical Case 4 course when supported secondary timing is also 
   expect(results.find((item) => item.id.endsWith("case-fact-duration-canonical"))?.status).toBe("passed");
 });
 
+test("Case 4 contract distinguishes its three timelines and suspected filling break", () => {
+  const sequence = case04BehaviorContract.stableFacts.find((fact) => fact.id === "sequence")!;
+  expect(sequence.acceptedPatterns.some((pattern) => pattern.test("It hurt a week ago, stopped, and then returned."))).toBe(true);
+  expect(sequence.acceptedPatterns.some((pattern) => pattern.test("It became sharper over the past 48 hours."))).toBe(true);
+  expect(sequence.contradictionPatterns.some((pattern) => pattern.test("It has been continuous without stopping for a week."))).toBe(true);
+  const filling = case04BehaviorContract.stableFacts.find((fact) => fact.id === "filling")!;
+  expect(filling.acceptedPatterns.some((pattern) => pattern.test("I think the old filling may have broken."))).toBe(true);
+  expect(filling.contradictionPatterns.some((pattern) => pattern.test("The filling definitely broke."))).toBe(true);
+});
+
 test("does not treat a Case 3 hypothetical safety question as current fever", () => {
   const results = evaluateBehaviorally({
     stepId: "case3-safety",
@@ -167,6 +177,7 @@ test("Case 1 distinguishes opioid use and misuse while rejecting affirmative his
     "I have not taken narcotics before.",
     "No, I have no history of prescription opioid misuse.",
     "I have never been dependent on opioids.",
+    "No, I've never used opioids, nor have I had any issues with misuse or dependence.",
   ]) expect(opioid.acceptedPatterns.some((pattern) => pattern.test(denial)), denial).toBe(true);
   for (const contradiction of [
     "Yes, I have used opioids before.",
@@ -174,6 +185,14 @@ test("Case 1 distinguishes opioid use and misuse while rejecting affirmative his
     "I took narcotics before.",
     "I was dependent on opioids.",
   ]) expect(opioid.contradictionPatterns.some((pattern) => pattern.test(contradiction)), contradiction).toBe(true);
+});
+
+test("Case 5 allergy negation is not treated as an affirmative allergy", () => {
+  const allergies = case05BehaviorContract.stableFacts.find((fact) => fact.id === "allergies")!;
+  const denial = "I don't have any known drug allergies, and I'm not allergic to penicillin.";
+  expect(allergies.acceptedPatterns.some((pattern) => pattern.test(denial))).toBe(true);
+  expect(allergies.contradictionPatterns.some((pattern) => pattern.test(denial))).toBe(false);
+  expect(allergies.contradictionPatterns.some((pattern) => pattern.test("I'm allergic to penicillin."))).toBe(true);
 });
 
 test("Case 3 conditional safety-net fever language is not treated as present fever", () => {
@@ -186,6 +205,18 @@ test("Case 3 conditional safety-net fever language is not treated as present fev
     expectation: { requiredPhrases: [], prohibitedPhrases: [], maximumResponseTimeMs: 30_000, requiresPatientRoleEvaluation: true },
   });
   expect(result.find((assertion) => assertion.id.endsWith("case-fact-fever"))?.status).toBe("passed");
+});
+
+test("Case 3 contract protects cold, radiation, and uncertain root-canal history", () => {
+  const cold = case03BehaviorContract.stableFacts.find((fact) => fact.id === "cold")!;
+  expect(cold.acceptedPatterns.some((pattern) => pattern.test("No, cold drinks do not make it hurt."))).toBe(true);
+  expect(cold.contradictionPatterns.some((pattern) => pattern.test("Cold makes it hurt."))).toBe(true);
+  const radiation = case03BehaviorContract.stableFacts.find((fact) => fact.id === "radiation")!;
+  expect(radiation.acceptedPatterns.some((pattern) => pattern.test("It travels toward my right ear."))).toBe(true);
+  expect(radiation.contradictionPatterns.some((pattern) => pattern.test("It goes to my left ear."))).toBe(true);
+  const rootCanal = case03BehaviorContract.stableFacts.find((fact) => fact.id === "root-canal")!;
+  expect(rootCanal.acceptedPatterns.some((pattern) => pattern.test("I'm not sure whether it had a root canal."))).toBe(true);
+  expect(rootCanal.contradictionPatterns.some((pattern) => pattern.test("I definitely had a root canal."))).toBe(true);
 });
 
 test("defines four behavioral styles for each of Cases 1 through 5", () => {
@@ -221,13 +252,125 @@ test("new contracts preserve case-specific allergy and symptom facts", () => {
   expect(case05BehaviorContract.stableFacts.find((fact) => fact.id === "cold")!.contradictionPatterns.some((pattern) => pattern.test("Cold relieves the pain."))).toBe(true);
 });
 
+test("Case 4 keeps penicillin allergy separate from denial of other allergies", () => {
+  const penicillin = case04BehaviorContract.stableFacts.find((fact) => fact.id === "penicillin")!;
+  for (const response of [
+    "I get hives from penicillin, but no other allergies.",
+    "Penicillin gives me hives.",
+    "I am allergic to penicillin.",
+  ]) {
+    expect(penicillin.acceptedPatterns.some((pattern) => pattern.test(response)), response).toBe(true);
+    expect(penicillin.contradictionPatterns.some((pattern) => pattern.test(response)), response).toBe(false);
+  }
+  for (const response of ["I have no allergies.", "I'm not allergic to penicillin."])
+    expect(penicillin.contradictionPatterns.some((pattern) => pattern.test(response)), response).toBe(true);
+});
+
 test("Case 5 cold contract accepts lingering pain whether cold is mentioned before or after it", () => {
   const cold = case05BehaviorContract.stableFacts.find((fact) => fact.id === "cold")!;
   for (const response of [
     "Cold makes the pain worse and it lingers afterward.",
     "Yes, the pain does linger a bit even after the cold sensation is gone.",
   ]) expect(cold.acceptedPatterns.some((pattern) => pattern.test(response)), response).toBe(true);
+  expect(cold.acceptedPatterns.some((pattern) => pattern.test("Yes, it does. The pain didn't go away immediately after I removed the cold; it stayed for a bit afterward."))).toBe(true);
+  expect(cold.acceptedPatterns.some((pattern) => pattern.test("Cold makes the pain worse."))).toBe(false);
   expect(cold.contradictionPatterns.some((pattern) => pattern.test("Cold relieves the pain."))).toBe(true);
+});
+
+test("Case 5 cold contract accepts persistence after cold but not cold sensitivity alone", () => {
+  const cold = case05BehaviorContract.stableFacts.find((fact) => fact.id === "cold")!;
+  for (const response of [
+    "The pain lasts even after I remove the cold.",
+    "The pain lasts after I remove the cold.",
+    "The pain continues after I remove the cold.",
+    "It remains after the cold is removed.",
+    "It persists after the cold is removed.",
+    "It doesn't stop immediately after the cold is gone.",
+    "It keeps hurting after the cold is removed.",
+  ]) expect(cold.acceptedPatterns.some((pattern) => pattern.test(response)), response).toBe(true);
+  for (const response of ["Cold hurts.", "Cold makes it worse.", "It hurts with cold."])
+    expect(cold.acceptedPatterns.some((pattern) => pattern.test(response)), response).toBe(false);
+});
+
+test("Case 5 cold contract recognizes the post-cold persistence relation without enumerating verbs", () => {
+  const cold = case05BehaviorContract.stableFacts.find((fact) => fact.id === "cold")!;
+  for (const response of [
+    "Yes, cold drinks make it much worse, and the pain sticks around even after I take the cold away for a little while.",
+    "Cold makes it worse, and the pain hangs around after I remove the cold.",
+    "Cold makes it worse, and it lingers after the cold is gone.",
+    "Cold makes it worse, and the pain lasts after I remove the cold.",
+    "Cold makes it worse, and it continues after the cold is removed.",
+    "Cold makes it worse, and the pain remains after the cold is gone.",
+    "Cold makes it worse, and it persists after the cold is removed.",
+    "Cold makes it worse, and the pain keeps hurting after the cold is removed.",
+    "Cold makes it worse, and it doesn't go away after the cold is gone.",
+  ]) expect(cold.acceptedPatterns.some((pattern) => pattern.test(response)), response).toBe(true);
+  for (const response of ["Cold hurts.", "Cold makes it worse.", "It hurts with cold."])
+    expect(cold.acceptedPatterns.some((pattern) => pattern.test(response)), response).toBe(false);
+});
+
+test("stable negative fever facts distinguish explicit denial from affirmative history", () => {
+  for (const [contract, denial] of [
+    [case03BehaviorContract, "No, I have not had a fever."],
+    [case04BehaviorContract, "No, I have not had fever or chills."],
+  ] as const) {
+    const fever = contract.stableFacts.find((fact) => fact.id === "fever")!;
+    expect(fever.acceptedPatterns.some((pattern) => pattern.test(denial))).toBe(true);
+    expect(fever.contradictionPatterns.some((pattern) => pattern.test(denial))).toBe(false);
+    expect(fever.contradictionPatterns.some((pattern) => pattern.test("I did have a fever."))).toBe(true);
+  }
+});
+
+test("Case 4 accepts exact natural 7/10 equivalents and rejects other values", () => {
+  const severity = case04BehaviorContract.stableFacts.find((fact) => fact.id === "severity")!;
+  for (const response of [
+    "The pain is constant, and it's quite severe, about a 7 on a ten-point scale.",
+    "7/10",
+    "7 out of 10",
+    "seven out of ten",
+    "7 on a ten scale",
+    "7 on a ten-point scale",
+    "seven on a ten-point scale",
+    "It's about a 7 on a pain scale of 10.",
+    "7 on a scale of 10.",
+    "7 on a ten-point pain scale.",
+  ])
+    expect(severity.acceptedPatterns.some((pattern) => pattern.test(response)), response).toBe(true);
+  for (const response of [
+    "6/10", "6 out of 10", "six out of ten", "6 on a ten-point scale", "six on a ten-point scale",
+    "8/10", "8 out of 10", "eight out of ten", "8 on a ten-point scale", "eight on a ten-point scale",
+    "9/10", "9 out of 10", "nine out of ten", "9 on a ten-point scale", "nine on a ten-point scale",
+    "6 on a pain scale of 10.", "8 on a pain scale of 10.", "9 on a pain scale of 10.",
+  ]) {
+    expect(severity.acceptedPatterns.some((pattern) => pattern.test(response)), response).toBe(false);
+    expect(severity.contradictionPatterns.some((pattern) => pattern.test(response)), response).toBe(true);
+  }
+  expect(severity.acceptedPatterns.some((pattern) => pattern.test("Severe pain."))).toBe(false);
+});
+
+test("Case 4 preserves historical cold pain while accepting no current cold pain", () => {
+  const cold = case04BehaviorContract.stableFacts.find((fact) => fact.id === "cold-current")!;
+  const response = "Cold used to hurt that tooth a while ago. Cold is not painful now, although it used to hurt.";
+  expect(cold.acceptedPatterns.some((pattern) => pattern.test(response))).toBe(true);
+  expect(cold.contradictionPatterns.some((pattern) => pattern.test(response))).toBe(false);
+  expect(cold.contradictionPatterns.some((pattern) => pattern.test("Cold is still painful now."))).toBe(true);
+});
+
+test("Case 5 accepts conversational exact 9/10 answers and rejects non-nine or nonnumeric answers", () => {
+  const severity = case05BehaviorContract.stableFacts.find((fact) => fact.id === "severity")!;
+  for (const response of [
+    "It's a nine, it's really severe.",
+    "It's nine.",
+    "About a nine.",
+    "Around a nine.",
+    "It's nine out of ten.",
+    "9 out of 10.",
+    "9/10.",
+    "Nine on a ten-point scale.",
+    "Nine on a pain scale of 10.",
+  ]) expect(severity.acceptedPatterns.some((pattern) => pattern.test(response)), response).toBe(true);
+  for (const response of ["It's an eight.", "It's a ten.", "It's really severe.", "Very painful."])
+    expect(severity.acceptedPatterns.some((pattern) => pattern.test(response)), response).toBe(false);
 });
 
 test("Case 5 contract accepts plain NKDA wording and rejects denial of canonical smoking", () => {
@@ -259,4 +402,66 @@ test("interprets coordinated and contrastive airway polarity clause-locally", ()
   expect(interpretAirwayFactPolarities("I can breathe normally, but it hurts to swallow.")).toEqual({ breathing: ["negated"], swallowing: ["affirmed"] });
   expect(interpretAirwayFactPolarities("I am having trouble breathing and swallowing.")).toEqual({ breathing: ["affirmed"], swallowing: ["affirmed"] });
   expect(interpretAirwayFactPolarities("No, I'm not having trouble breathing or swallowing, but my right cheek is swollen. I'm feeling feverish and weak though.")).toEqual({ breathing: ["negated"], swallowing: ["negated"] });
+});
+
+test("accepts the canonical Case 1 positional breathing distinction", () => {
+  expect(contradictionStatus("No, I'm not short of breath while sitting upright. It's only when I lie down that I have trouble breathing and swallowing.")).toBe("passed");
+});
+
+test("Case 5 separates patient tooth knowledge from the examination finding", () => {
+  const exactTooth = case05BehaviorContract.stableFacts.find((fact) => fact.id === "exact-tooth")!;
+  expect(exactTooth.acceptedPatterns.some((pattern) => pattern.test("I can't tell which exact tooth is causing it."))).toBe(true);
+  expect(exactTooth.contradictionPatterns.some((pattern) => pattern.test("I definitely know it is the first molar."))).toBe(true);
+});
+
+test("Case 5 distinguishes historical upper extraction from current lower-left pain", () => {
+  const location = case05BehaviorContract.stableFacts.find((fact) => fact.id === "location")!;
+  for (const response of [
+    "I had an upper tooth extracted years ago, but this pain is in my lower-left jaw.",
+    "The extraction was an upper tooth.",
+    "My last dental visit was five years ago for an upper-tooth extraction.",
+  ]) expect(location.contradictionPatterns.some((pattern) => pattern.test(response)), response).toBe(false);
+  for (const response of [
+    "The pain is in my upper jaw.",
+    "The painful tooth is on the upper right.",
+    "It hurts in the upper-left area.",
+  ]) expect(location.contradictionPatterns.some((pattern) => pattern.test(response)), response).toBe(true);
+});
+
+test("Case 5 accepts natural lower-left direct answers and rejects other current locations", () => {
+  const location = case05BehaviorContract.stableFacts.find((fact) => fact.id === "location")!;
+  for (const response of [
+    "It's on the left side, near the bottom.",
+    "The pain is on the lower left.",
+    "It's on the left side of my lower jaw.",
+    "It's on the bottom left.",
+    "It's on the lower-left side.",
+    "It's on the lower part of the left side.",
+    "It's on the left side down low.",
+  ]) expect(location.acceptedPatterns.some((pattern) => pattern.test(response)), response).toBe(true);
+  for (const response of [
+    "It's on the upper left.",
+    "It's on the upper right.",
+    "It's on the lower right.",
+    "It's on the right side.",
+    "It's in the upper jaw.",
+  ]) {
+    expect(location.acceptedPatterns.some((pattern) => pattern.test(response)), response).toBe(false);
+    expect(location.contradictionPatterns.some((pattern) => pattern.test(response)), response).toBe(true);
+  }
+});
+
+test("Case 4 fever matcher keeps explicit denial separate from affirmative symptoms", () => {
+  const fever = case04BehaviorContract.stableFacts.find((fact) => fact.id === "fever")!;
+  for (const response of [
+    "I have no fever or chills.",
+    "No fever or chills.",
+    "I do not have a fever or chills.",
+    "I haven't had fever or chills.",
+  ]) {
+    expect(fever.acceptedPatterns.some((pattern) => pattern.test(response)), response).toBe(true);
+    expect(fever.contradictionPatterns.some((pattern) => pattern.test(response)), response).toBe(false);
+  }
+  for (const response of ["I have fever and chills.", "I did have a fever.", "I've been having chills."])
+    expect(fever.contradictionPatterns.some((pattern) => pattern.test(response)), response).toBe(true);
 });
