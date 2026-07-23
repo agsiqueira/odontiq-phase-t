@@ -100,6 +100,17 @@ export const selectors = {
 
   encounterRoot: (page: Page): Locator => page.getByTestId("encounter-root"),
 
+  onboardingHeading: (page: Page): Locator =>
+    page.getByRole("heading", { name: /^before you begin$/i }),
+
+  onboardingSteps: (page: Page): Locator =>
+    page.getByRole("heading", {
+      name: /^(?:talk with the patient|review examinations|let the conversation develop|finish the encounter)$/i,
+    }),
+
+  onboardingBackAction: (page: Page): Locator =>
+    page.getByRole("link", { name: /^back to cases$/i }),
+
   startConsultationButton: (page: Page): Locator =>
     page.getByTestId("start-consultation-button").or(
       // Verify against the current OdontIQ UI, including restart wording.
@@ -133,6 +144,15 @@ export const selectors = {
     page.getByTestId("finish-consultation-button").or(
       page.getByRole("button", { name: /^(?:finish consultation|complete consultation)$/i }),
     ),
+
+  examinationButton: (page: Page): Locator =>
+    page.getByRole("button", { name: /^(?:perform )?exam(?:ination)?$/i }),
+
+  examinationHeading: (page: Page): Locator =>
+    page.getByRole("heading", { name: /^examination$/i }),
+
+  examinationImage: (page: Page): Locator =>
+    page.locator('img[src*="/patients/"][src*="/examination/"]'),
 
   completionLoadingMarker: (page: Page): Locator =>
     page.getByRole("button", { name: /finishing|compiling/i })

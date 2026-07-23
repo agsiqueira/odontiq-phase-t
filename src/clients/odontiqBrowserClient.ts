@@ -165,7 +165,13 @@ export class OdontiqBrowserClient {
 
     const caseListLink = selectors.caseListLink(this.page).first();
     try {
-      await caseListLink.click();
+      if (await caseListLink.isVisible().catch(() => false)) {
+        await caseListLink.click();
+      } else {
+        await this.page.goto(new URL("/cases", this.baseUrl).toString(), {
+          waitUntil: "domcontentloaded",
+        });
+      }
     } catch (error) {
       throw this.interactionError("Could not navigate to the case list. Verify caseListLink.", "navigate-case-list", error);
     }

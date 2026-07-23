@@ -63,7 +63,7 @@ export default defineConfig({
     },
     {
       name: "authenticated chromium",
-      testMatch: /browser[\\/](?:case0[12]-happy-path|case01-completion-report|behavioral-regression)\.spec\.ts/,
+      testMatch: /browser[\\/](?:case0[12]-happy-path|case01-completion-report|behavioral-regression|phase-t-release)\.spec\.ts/,
       use: {
         ...devices["Desktop Chrome"],
         storageState: clerkAuthStatePath,

@@ -13,6 +13,15 @@ test("appended patient message is new", () => expect(isNewerThanBaseline(baselin
 test("streamed replacement in the last container is new", () => expect(isNewerThanBaseline(baseline({ patientMessageCount: 2, lastPatientText: "partial", lastPatientContainerIdentity: "p-2" }), { count: 2, text: "partial complete", containerIdentity: "p-2" })).toBe(true));
 test("duplicate text in a different turn is new", () => expect(isNewerThanBaseline(baseline({ patientMessageCount: 2, lastPatientText: "same", lastPatientContainerIdentity: "p-2" }), { count: 3, text: "same", containerIdentity: "p-3" })).toBe(true));
 test("long history remains a constant-size comparison", () => expect(isNewerThanBaseline(baseline({ patientMessageCount: 10_000, lastPatientText: "old" }), { count: 10_001, text: "new" })).toBe(true));
+test("polling input remains bounded regardless of historical transcript length", () => {
+  const candidateInspectionCounts = [0, 1, 10, 1_000, 100_000].map((historyLength) => {
+    const before = baseline({ patientMessageCount: historyLength, lastPatientText: "historical" });
+    const newestCandidates = [{ count: historyLength + 1, text: "new response", containerIdentity: `patient-${historyLength}` }];
+    expect(newestCandidates.some((candidate) => isNewerThanBaseline(before, candidate))).toBe(true);
+    return newestCandidates.length;
+  });
+  expect(new Set(candidateInspectionCounts)).toEqual(new Set([1]));
+});
 test("unchanged state represents no response before timeout", () => expect(isNewerThanBaseline(baseline({ patientMessageCount: 4, lastPatientText: "last" }), { count: 4, text: "last" })).toBe(false));
 test("historical DOM reordering cannot replace an accepted new response", () => {
   const before = baseline({ patientMessageCount: 20, lastPatientText: "old airway answer", lastPatientContainerIdentity: "patient-19" });

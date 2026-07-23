@@ -66,6 +66,9 @@ npm run test:case01-report
 # Conversation journeys plus completion/report regression
 npm run test:regression
 
+# Final release journeys: onboarding, targeted disclosure, Case 2 image, and Cases 1-5 smoke
+npm run test:release
+
 # Incremental message-baseline unit tests
 npm run test:unit
 
@@ -83,6 +86,8 @@ npm run report
 ```
 
 Run `npm run typecheck` separately for strict TypeScript validation.
+
+Run authenticated browser suites serially when they share one Clerk account. The release onboarding check needs at least one case without an active server-side encounter; if every case is already active, it is reported as skipped instead of deleting test-user history.
 
 To invalidate the saved session, delete `playwright/.clerk/user.json` and rerun `npm run test:auth-setup`. The entire `playwright/.clerk/` directory is ignored by Git and must never be committed. Running Case 1 also runs its setup dependency and regenerates the state.
 
@@ -141,6 +146,8 @@ Deterministic patient-role patterns are intentionally narrow heuristics. They ca
 
 - Case 1: Amara Johnson at `/encounter/case-01`
 - Case 2: Marcus Lee at `/encounter/case-02`
+
+Release smoke coverage also opens Cases 3-5 through the same browser client. `npm run test:release` additionally checks the NPO response boundary, Case 3 gum-palpation recognition, Case 3 progressive disclosure, and the Case 2 examination image and zoom presentation.
 
 Both journeys use the same `BrowserJourneyRunner`, browser client, scoped case-card behavior, transcript detection, deterministic evaluator, reporting, and authenticated Playwright project. Scenario files supply patient identity, encounter path, messages, and tolerant expectations; no case-specific runner is created.
 

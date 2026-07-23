@@ -13,3 +13,4 @@ artifacts/traces/*
 artifacts/reports/*
 
 !.gitkeep
+output/
